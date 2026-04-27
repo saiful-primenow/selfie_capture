@@ -10,7 +10,6 @@ import 'package:image/image.dart' as img;
 import 'package:path_provider/path_provider.dart';
 
 import 'action_button.dart';
-import 'camera_helper.dart';
 import 'display_image.dart';
 
 class SelfieCapture extends StatefulWidget {
@@ -38,13 +37,14 @@ class _SelfieCaptureState extends State<SelfieCapture> {
   bool _headTurnCaptured = false;
   bool loading = false;
   int _blinkCount = 0;
+  bool _eyesWereClosed = false; // Added for robust blink detection
   String? _firstBlinkPhotoPath;
   String? _thirdBlinkPhotoPath;
   String? _headTurnPhotoPath;
+  String? _leftTurnPhotoPath;
+  String? _rightTurnPhotoPath;
   String? showImage;
   String? convertedImage = "";
-  String ekyc_id = "";
-  String name = "";
 
   // bool videoDetected = false;
   String message = "Blink Your Eyes";
@@ -60,11 +60,6 @@ class _SelfieCaptureState extends State<SelfieCapture> {
     ),
   );
 
-  String frontNID = "";
-
-  List<List<Offset>> _landmarkHistory = [];
-  int maxHistoryLength = 15;
-
   @override
   void initState() {
     super.initState();
@@ -79,31 +74,10 @@ class _SelfieCaptureState extends State<SelfieCapture> {
     );
     _initializeControllerFuture = _controller.initialize().then((_) async {
       if (!mounted) return;
-      // await _controller.setZoomLevel(zoomLevel);
       setState(() {});
       _startImageStream();
     });
     _initializeControllerFuture;
-
-    // frontNID = widget.frontNID;
-    // ekyc_id = widget.ekyc_id;
-    // debugPrint("Name from selfie is: ${widget.name}");
-    // name = widget.name;
-  }
-
-  @override
-  void didChangeAppLifecycleState(AppLifecycleState state) {
-
-    // App state changed before we got the chance to initialize.
-    if (_controller == null || !_controller.value.isInitialized) {
-      return;
-    }
-
-    if (state == AppLifecycleState.inactive) {
-      _controller.dispose();
-    } else if (state == AppLifecycleState.resumed) {
-      _initializeControllerFuture;
-    }
   }
 
   void _startImageStream() {
@@ -173,11 +147,13 @@ class _SelfieCaptureState extends State<SelfieCapture> {
         _headPosition = 'Right';
         _rightTurnCaptured = true;
       });
+      _capturePhoto(type: 'right');
     } else if (yAngle < -15 && !_leftTurnCaptured) {
       setState(() {
         _headPosition = 'Left';
         _leftTurnCaptured = true;
       });
+      _capturePhoto(type: 'left');
     } else {
       _headPosition = 'Center';
     }
@@ -202,31 +178,33 @@ class _SelfieCaptureState extends State<SelfieCapture> {
         !_headTurnCaptured)
       return;
 
-    final leftEye = _currentFace!.leftEyeOpenProbability ?? 1;
-    final rightEye = _currentFace!.rightEyeOpenProbability ?? 1;
+    final leftEye = _currentFace!.leftEyeOpenProbability ?? 1.0;
+    final rightEye = _currentFace!.rightEyeOpenProbability ?? 1.0;
 
-    if (leftEye < 0.15 && rightEye < 0.15) {
+    bool currentlyClosed = leftEye < 0.15 && rightEye < 0.15;
+    bool currentlyOpen = leftEye > 0.80 && rightEye > 0.80;
+
+    if (currentlyClosed && !_eyesWereClosed && !_isCapturing) {
+      // Transition from Open to Closed
+      _eyesWereClosed = true;
+      _blinkCount++;
       _eyeStatus = 'Eyes Closed';
 
-      if (!_isCapturing && hasSmiled) {
-        _blinkCount++;
-
-        if (_blinkCount == 1) {
-          _capturePhoto(type: 'blink1');
-        } else if (_blinkCount == 2) {
-          debugPrint("Second Blink Detected.");
-        } else if (_blinkCount == 3) {
-          _capturePhoto(type: 'blink3');
-        }
-
-        if (_blinkCount >= 3 && _headTurnCaptured && !_cameraStopped) {
-          _stopCamera();
-        }
+      if (_blinkCount == 1) {
+        _capturePhoto(type: 'blink1');
+      } else if (_blinkCount == 3) {
+        _capturePhoto(type: 'blink3');
       }
-    } else if (leftEye > 0.85 && rightEye > 0.85) {
+
+      if (_blinkCount >= 3 && !_cameraStopped) {
+        _stopCamera();
+      }
+      setState(() {});
+    } else if (currentlyOpen && _eyesWereClosed) {
+      // Transition from Closed to Open
+      _eyesWereClosed = false;
       _eyeStatus = 'Eyes Open';
-    } else {
-      _eyeStatus = 'One Eye Closed';
+      setState(() {});
     }
   }
 
@@ -248,15 +226,16 @@ class _SelfieCaptureState extends State<SelfieCapture> {
       setState(() {
         if (type == 'blink1') {
           _firstBlinkPhotoPath = fileName;
-          _thirdBlinkPhotoPath = fileName;
         } else if (type == 'blink2') {
-          _thirdBlinkPhotoPath = fileName;
           debugPrint("Blink 2 captured.");
         } else if (type == 'blink3') {
           _thirdBlinkPhotoPath = fileName;
         } else if (type == 'head') {
           _headTurnPhotoPath = fileName;
-          _thirdBlinkPhotoPath = fileName;
+        } else if (type == 'left') {
+          _leftTurnPhotoPath = fileName;
+        } else if (type == 'right') {
+          _rightTurnPhotoPath = fileName;
         }
 
         if (_firstBlinkPhotoPath != null &&
@@ -265,10 +244,12 @@ class _SelfieCaptureState extends State<SelfieCapture> {
           message = "Almost Done";
           _stopCamera();
 
-          convertImageToBase64(showImage!, (base64) {
-            convertedImage = base64;
-            print("Base64 result: $base64");
-          });
+          if (showImage != null) {
+            convertImageToBase64(showImage!, (base64) {
+              convertedImage = base64;
+              print("Base64 result: $base64");
+            });
+          }
         }
       });
     } catch (e) {
@@ -288,9 +269,12 @@ class _SelfieCaptureState extends State<SelfieCapture> {
         await _controller.stopImageStream();
         _cameraStreaming = false;
       }
+      
       setState(() {
         _cameraStopped = true;
       });
+
+      await _controller.dispose();
     } catch (e) {
       debugPrint('Error stopping camera: $e');
     }
@@ -308,13 +292,24 @@ class _SelfieCaptureState extends State<SelfieCapture> {
       _firstBlinkPhotoPath = null;
       _thirdBlinkPhotoPath = null;
       _headTurnPhotoPath = null;
+      _leftTurnPhotoPath = null;
+      _rightTurnPhotoPath = null;
       message = "Blink Your Eyes";
     });
 
-    if (!_controller.value.isInitialized) {
-      await _controller.initialize();
-    }
-    _startImageStream();
+    _controller = CameraController(
+      widget.camera,
+      ResolutionPreset.medium,
+      enableAudio: false,
+      imageFormatGroup: Platform.isAndroid
+          ? ImageFormatGroup.nv21 // for Android
+          : ImageFormatGroup.bgra8888,
+    );
+    _initializeControllerFuture = _controller.initialize().then((_) async {
+      if (!mounted) return;
+      setState(() {});
+      _startImageStream();
+    });
   }
 
   InputImageRotation _rotationIntToImageRotation(int rotation) {
@@ -366,40 +361,81 @@ class _SelfieCaptureState extends State<SelfieCapture> {
     super.dispose();
   }
 
-  Widget _buildStatusPanel() {
+  Widget _buildStepIndicator() {
+    return Row(
+      mainAxisAlignment: MainAxisAlignment.center,
+      children: [
+        _stepIcon(Icons.turn_left, _leftTurnCaptured),
+        _stepLine(_leftTurnCaptured),
+        _stepIcon(Icons.turn_right, _rightTurnCaptured),
+        _stepLine(_rightTurnCaptured),
+        _stepIcon(Icons.sentiment_satisfied, hasSmiled),
+        _stepLine(hasSmiled),
+        _stepIcon(Icons.remove_red_eye, _blinkCount >= 3),
+      ],
+    );
+  }
+
+  Widget _stepIcon(IconData icon, bool completed) {
     return Container(
-      padding: const EdgeInsets.all(8),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          if (_leftTurnCaptured && !_rightTurnCaptured)
-            const Text(
-              "Turn Head Right",
-              style: TextStyle(color: Colors.black, fontSize: 20),
-            ),
-
-          if (!_leftTurnCaptured)
-            const Text(
-              "Turn Head Left",
-              style: TextStyle(color: Colors.black, fontSize: 20),
-            ),
-
-          if (_headTurnCaptured && !hasSmiled && _blinkCount < 3)
-            const Text(
-              "Please Smile",
-              style: TextStyle(color: Colors.black, fontSize: 20),
-            ),
-          if (hasSmiled && _blinkCount < 3)
-            Text(message, style: TextStyle(color: Colors.black, fontSize: 20)),
-          if (_blinkCount > 1 && _cameraStopped)
-            const Text(
-              "Almost Done",
-              style: TextStyle(color: Colors.black, fontSize: 20),
-            ),
-
-          // if (showImage != null && videoDetected) Text("Video Detected - Take Live Selfies", style: TextStyle(fontSize: 18, fontWeight: FontWeight.w600)),
-        ],
+      padding: const EdgeInsets.all(6),
+      decoration: BoxDecoration(
+        color: completed ? Colors.green : Colors.grey.shade300,
+        shape: BoxShape.circle,
       ),
+      child: Icon(icon, color: Colors.white, size: 18),
+    );
+  }
+
+  Widget _stepLine(bool completed) {
+    return Container(
+      width: 30,
+      height: 2,
+      color: completed ? Colors.green : Colors.grey.shade300,
+    );
+  }
+
+  Widget _buildStatusPanel() {
+    String instruction = "Center your face";
+    Color statusColor = Colors.blue;
+
+    if (!_leftTurnCaptured) {
+      instruction = "Turn Head Left";
+    } else if (!_rightTurnCaptured) {
+      instruction = "Turn Head Right";
+    } else if (!hasSmiled) {
+      instruction = "Now Smile!";
+      statusColor = Colors.orange;
+    } else if (_blinkCount < 3) {
+      instruction = "Blink your eyes (${_blinkCount}/3)";
+      statusColor = Colors.purple;
+    } else {
+      instruction = "Success! Capture complete";
+      statusColor = Colors.green;
+    }
+
+    return Column(
+      children: [
+        _buildStepIndicator(),
+        const SizedBox(height: 24),
+        Container(
+          padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 12),
+          decoration: BoxDecoration(
+            color: statusColor.withAlpha(26),
+            borderRadius: BorderRadius.circular(30),
+            border: Border.all(color: statusColor.withAlpha(128)),
+          ),
+          child: Text(
+            instruction,
+            textAlign: TextAlign.center,
+            style: TextStyle(
+              color: statusColor,
+              fontSize: 20,
+              fontWeight: FontWeight.bold,
+            ),
+          ),
+        ),
+      ],
     );
   }
 
@@ -410,7 +446,7 @@ class _SelfieCaptureState extends State<SelfieCapture> {
 
     return Scaffold(
       backgroundColor: Colors.white,
-      appBar: AppBar(title: Text("Self Live Photo"), centerTitle: true,),
+      appBar: AppBar(title: Text("Self Live Photo"), centerTitle: true),
       body: loading
           ? const Center(
               child: CircularProgressIndicator(
@@ -429,22 +465,25 @@ class _SelfieCaptureState extends State<SelfieCapture> {
                     height: 250,
                     decoration: BoxDecoration(
                       shape: BoxShape.circle,
-                      // border: Border.all(color: Colors.grey.shade300, width: 5),
+                      // border: Border.all(
+                      //   color: _cameraStopped ? Colors.green : Colors.blue.withAlpha(126),
+                      //   width: 4,
+                      // ),
                     ),
-                    clipBehavior: Clip.hardEdge,
-                    child: (_controller.value.isInitialized)
-                        ? (_cameraStopped
-                              ? (showImage != null
-                                    ? Image.file(
-                                        File(
-                                          _thirdBlinkPhotoPath ?? showImage!,
-                                        ),
-                                        fit: BoxFit.cover,
-                                        width: double.infinity,
-                                        height: double.infinity,
-                                      )
-                                    : const Center(child: Text("")))
-                              : FittedBox(
+                    clipBehavior: Clip.antiAlias,
+                    child: (_cameraStopped)
+                        ? (showImage != null
+                              ? Image.file(
+                                  File(
+                                    _thirdBlinkPhotoPath ?? showImage!,
+                                  ),
+                                  fit: BoxFit.cover,
+                                  width: double.infinity,
+                                  height: double.infinity,
+                                )
+                              : const Center(child: Text("")))
+                        : (_controller.value.isInitialized)
+                              ? FittedBox(
                                   fit: BoxFit.cover,
                                   child: SizedBox(
                                     width:
@@ -453,14 +492,14 @@ class _SelfieCaptureState extends State<SelfieCapture> {
                                         _controller.value.previewSize!.width,
                                     child: CameraPreview(_controller),
                                   ),
-                                ))
-                        : const Center(
-                            child: CircularProgressIndicator(
-                              valueColor: AlwaysStoppedAnimation<Color>(
-                                Colors.red,
-                              ),
-                            ),
-                          ),
+                                )
+                              : const Center(
+                                  child: CircularProgressIndicator(
+                                    valueColor: AlwaysStoppedAnimation<Color>(
+                                      Colors.red,
+                                    ),
+                                  ),
+                                ),
                   ),
 
                   const SizedBox(height: 111),
@@ -476,20 +515,22 @@ class _SelfieCaptureState extends State<SelfieCapture> {
                       activeBackgroundImage: 'assets/button_background_2.png',
                       disabledBackgroundImage:
                           'assets/button_background_grey.png',
-                      showBackButton: _cameraStopped,
+                      showBackButton: true,
                       backButtonText: "Restart",
                       onBackButtonTap: _restartCamera,
                       onTopButtonTap: () async {
-                        if (showImage != null) {
-                          Navigator.push(
-                            context,
-                            MaterialPageRoute(
-                              builder: (context) => DisplayImageScreen(
-                                imagePath: showImage!,
-                              ),
+                        Navigator.push(
+                          context,
+                          MaterialPageRoute(
+                            builder: (context) => DisplayImageScreen(
+                              blink1Path: _firstBlinkPhotoPath,
+                              blink3Path: _thirdBlinkPhotoPath,
+                              headTurnPath: _headTurnPhotoPath,
+                              leftTurnPath: _leftTurnPhotoPath,
+                              rightTurnPath: _rightTurnPhotoPath,
                             ),
-                          );
-                        }
+                          ),
+                        );
                       },
                     ),
                   ),

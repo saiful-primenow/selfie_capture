@@ -3,7 +3,11 @@ import 'dart:io';
 import 'dart:typed_data';
 import 'package:image/image.dart' as img;
 
-Future<String> getBase64Image(String imagePath, {int quality = 5, int maxWidth = 512}) async {
+Future<String> getBase64Image(
+  String imagePath, {
+  int quality = 5,
+  int maxWidth = 512,
+}) async {
   try {
     final File imageFile = File(imagePath);
     final Uint8List imageBytes = await imageFile.readAsBytes();
@@ -18,7 +22,10 @@ Future<String> getBase64Image(String imagePath, {int quality = 5, int maxWidth =
     }
 
     // Encode the image to JPEG with reduced quality
-    final List<int> compressedBytes = img.encodeJpg(originalImage, quality: quality);
+    final List<int> compressedBytes = img.encodeJpg(
+      originalImage,
+      quality: quality,
+    );
 
     // Convert to base64
     final String base64Image = base64Encode(compressedBytes);
