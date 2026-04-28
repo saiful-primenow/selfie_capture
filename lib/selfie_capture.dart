@@ -141,37 +141,39 @@ class _SelfieCaptureState extends State<SelfieCapture> {
 
     final yAngle = _currentFace!.headEulerAngleY ?? 0;
 
-    // RIGHT TURN
-    if (yAngle > 25) {
-      _rightStableCount++;
-      _leftStableCount = 0;
-
-      if (_rightStableCount >= REQUIRED_STABLE_FRAMES && !_rightTurnCaptured) {
-        setState(() {
-          _rightTurnCaptured = true;
-        });
-        _capturePhoto(type: 'right');
+    // STEP 1: RIGHT TURN FIRST
+    if (!_rightTurnCaptured) {
+      if (yAngle > 25) {
+        _rightStableCount++;
+        if (_rightStableCount >= REQUIRED_STABLE_FRAMES) {
+          setState(() {
+            _rightTurnCaptured = true;
+          });
+          _capturePhoto(type: 'right');
+        }
+      } else {
+        _rightStableCount = 0;
       }
+      return; // STOP here until right is done
     }
-    // LEFT TURN
-    else if (yAngle < -25) {
-      _leftStableCount++;
-      _rightStableCount = 0;
 
-      if (_leftStableCount >= REQUIRED_STABLE_FRAMES && !_leftTurnCaptured) {
-        setState(() {
-          _leftTurnCaptured = true;
-        });
-        _capturePhoto(type: 'left');
+    // STEP 2: LEFT TURN AFTER RIGHT
+    if (!_leftTurnCaptured) {
+      if (yAngle < -25) {
+        _leftStableCount++;
+        if (_leftStableCount >= REQUIRED_STABLE_FRAMES) {
+          setState(() {
+            _leftTurnCaptured = true;
+          });
+          _capturePhoto(type: 'left');
+        }
+      } else {
+        _leftStableCount = 0;
       }
-    }
-    // CENTER
-    else {
-      _leftStableCount = 0;
-      _rightStableCount = 0;
+      return; // STOP here until left is done
     }
 
-    // AFTER BOTH CAPTURED
+    // STEP 3: AFTER BOTH
     if (_leftTurnCaptured && _rightTurnCaptured && !_headTurnCaptured) {
       _headTurnCaptured = true;
       _capturePhoto(type: 'head');
@@ -377,10 +379,11 @@ class _SelfieCaptureState extends State<SelfieCapture> {
     return Row(
       mainAxisAlignment: MainAxisAlignment.center,
       children: [
-        _stepIcon(Icons.turn_right, _leftTurnCaptured),
-        _stepLine(_leftTurnCaptured),
         _stepIcon(Icons.turn_left, _rightTurnCaptured),
         _stepLine(_rightTurnCaptured),
+
+        _stepIcon(Icons.turn_right, _leftTurnCaptured),
+        _stepLine(_leftTurnCaptured),
         _stepIcon(Icons.sentiment_satisfied, hasSmiled),
         _stepLine(hasSmiled),
         _stepIcon(Icons.remove_red_eye, _blinkCount >= 3),
@@ -418,10 +421,10 @@ class _SelfieCaptureState extends State<SelfieCapture> {
       // Only force centering at the very beginning
       instruction = "Center your face in the frame";
       statusColor = Colors.red;
-    } else if (!_leftTurnCaptured) {
-      instruction = "Turn Head Right";
     } else if (!_rightTurnCaptured) {
       instruction = "Turn Head Left";
+    } else if (!_leftTurnCaptured) {
+      instruction = "Turn Head Right";
     } else if (!hasSmiled) {
       instruction = "Now Smile!";
       statusColor = Colors.orange;
