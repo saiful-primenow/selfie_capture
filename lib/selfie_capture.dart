@@ -540,7 +540,6 @@ class _SelfieCaptureState extends State<SelfieCapture> {
                             builder: (context) => DisplayImageScreen(
                               blink1Path: _firstBlinkPhotoPath,
                               blink3Path: _thirdBlinkPhotoPath,
-                              headTurnPath: _headTurnPhotoPath,
                               leftTurnPath: _leftTurnPhotoPath,
                               rightTurnPath: _rightTurnPhotoPath,
                             ),

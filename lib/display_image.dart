@@ -4,7 +4,6 @@ import 'package:flutter/material.dart';
 class DisplayImageScreen extends StatelessWidget {
   final String? blink1Path;
   final String? blink3Path;
-  final String? headTurnPath;
   final String? leftTurnPath;
   final String? rightTurnPath;
 
@@ -12,7 +11,6 @@ class DisplayImageScreen extends StatelessWidget {
     super.key,
     this.blink1Path,
     this.blink3Path,
-    this.headTurnPath,
     this.leftTurnPath,
     this.rightTurnPath,
   });
@@ -24,7 +22,6 @@ class DisplayImageScreen extends StatelessWidget {
       if (blink1Path != null) {"title": "1st Blink", "path": blink1Path!},
       if (rightTurnPath != null) {"title": "Right Turn", "path": rightTurnPath!},
       if (leftTurnPath != null) {"title": "Left Turn", "path": leftTurnPath!},
-      if (headTurnPath != null) {"title": "Completed", "path": headTurnPath!},
     ];
 
     return Scaffold(
