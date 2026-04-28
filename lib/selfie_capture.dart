@@ -30,8 +30,6 @@ class _SelfieCaptureState extends State<SelfieCapture> {
   bool _cameraStreaming = false;
   bool hasSmiled = false;
   Face? _currentFace;
-  String _headPosition = 'Center';
-  String _eyeStatus = 'Eyes Open';
   bool _leftTurnCaptured = false;
   bool _rightTurnCaptured = false;
   bool _headTurnCaptured = false;
@@ -134,8 +132,6 @@ class _SelfieCaptureState extends State<SelfieCapture> {
         _updateEyeStatus();
       } else {
         _currentFace = null;
-        _headPosition = 'No Face';
-        _eyeStatus = 'No Face';
       }
     });
   }
@@ -150,36 +146,29 @@ class _SelfieCaptureState extends State<SelfieCapture> {
       _rightStableCount++;
       _leftStableCount = 0;
 
-      if (_rightStableCount >= REQUIRED_STABLE_FRAMES &&
-          !_rightTurnCaptured) {
+      if (_rightStableCount >= REQUIRED_STABLE_FRAMES && !_rightTurnCaptured) {
         setState(() {
-          _headPosition = 'Right';
           _rightTurnCaptured = true;
         });
         _capturePhoto(type: 'right');
       }
     }
-
     // LEFT TURN
     else if (yAngle < -25) {
       _leftStableCount++;
       _rightStableCount = 0;
 
-      if (_leftStableCount >= REQUIRED_STABLE_FRAMES &&
-          !_leftTurnCaptured) {
+      if (_leftStableCount >= REQUIRED_STABLE_FRAMES && !_leftTurnCaptured) {
         setState(() {
-          _headPosition = 'Left';
           _leftTurnCaptured = true;
         });
         _capturePhoto(type: 'left');
       }
     }
-
     // CENTER
     else {
       _leftStableCount = 0;
       _rightStableCount = 0;
-      _headPosition = 'Center';
     }
 
     // AFTER BOTH CAPTURED
@@ -213,7 +202,6 @@ class _SelfieCaptureState extends State<SelfieCapture> {
       // Transition from Open to Closed
       _eyesWereClosed = true;
       _blinkCount++;
-      _eyeStatus = 'Eyes Closed';
 
       if (_blinkCount == 1) {
         _capturePhoto(type: 'blink1');
@@ -227,7 +215,6 @@ class _SelfieCaptureState extends State<SelfieCapture> {
     } else if (currentlyOpen && _eyesWereClosed) {
       // Transition from Closed to Open
       _eyesWereClosed = false;
-      _eyeStatus = 'Eyes Open';
       setState(() {});
     }
   }
@@ -293,7 +280,7 @@ class _SelfieCaptureState extends State<SelfieCapture> {
         await _controller.stopImageStream();
         _cameraStreaming = false;
       }
-      
+
       setState(() {
         _cameraStopped = true;
       });
@@ -326,7 +313,8 @@ class _SelfieCaptureState extends State<SelfieCapture> {
       ResolutionPreset.medium,
       enableAudio: false,
       imageFormatGroup: Platform.isAndroid
-          ? ImageFormatGroup.nv21 // for Android
+          ? ImageFormatGroup
+                .nv21 // for Android
           : ImageFormatGroup.bgra8888,
     );
     _initializeControllerFuture = _controller.initialize().then((_) async {
@@ -438,7 +426,7 @@ class _SelfieCaptureState extends State<SelfieCapture> {
       instruction = "Now Smile!";
       statusColor = Colors.orange;
     } else if (_blinkCount < 3) {
-      instruction = "Blink your eyes (${_blinkCount}/3)";
+      instruction = "Blink your eyes ($_blinkCount/3)";
       statusColor = Colors.purple;
     } else {
       instruction = "Success! Capture complete";
@@ -512,23 +500,21 @@ class _SelfieCaptureState extends State<SelfieCapture> {
                                 )
                               : const Center(child: Text("Processing...")))
                         : (_controller.value.isInitialized)
-                              ? FittedBox(
-                                  fit: BoxFit.cover,
-                                  child: SizedBox(
-                                    width:
-                                        _controller.value.previewSize!.height,
-                                    height:
-                                        _controller.value.previewSize!.width,
-                                    child: CameraPreview(_controller),
-                                  ),
-                                )
-                              : const Center(
-                                  child: CircularProgressIndicator(
-                                    valueColor: AlwaysStoppedAnimation<Color>(
-                                      Colors.red,
-                                    ),
-                                  ),
-                                ),
+                        ? FittedBox(
+                            fit: BoxFit.cover,
+                            child: SizedBox(
+                              width: _controller.value.previewSize!.height,
+                              height: _controller.value.previewSize!.width,
+                              child: CameraPreview(_controller),
+                            ),
+                          )
+                        : const Center(
+                            child: CircularProgressIndicator(
+                              valueColor: AlwaysStoppedAnimation<Color>(
+                                Colors.red,
+                              ),
+                            ),
+                          ),
                   ),
 
                   const SizedBox(height: 111),
