@@ -45,6 +45,10 @@ class _SelfieCaptureState extends State<SelfieCapture> {
   String? _rightTurnPhotoPath;
   String? showImage;
   String? convertedImage = "";
+  int _leftStableCount = 0;
+  int _rightStableCount = 0;
+
+  static const int REQUIRED_STABLE_FRAMES = 5;
 
   // bool videoDetected = false;
   String message = "Blink Your Eyes";
@@ -128,7 +132,6 @@ class _SelfieCaptureState extends State<SelfieCapture> {
         _updateHeadPosition();
         _checkSmileThenProceed();
         _updateEyeStatus();
-        // _trackMicroJitter(faces.first);
       } else {
         _currentFace = null;
         _headPosition = 'No Face';
@@ -142,22 +145,44 @@ class _SelfieCaptureState extends State<SelfieCapture> {
 
     final yAngle = _currentFace!.headEulerAngleY ?? 0;
 
-    if (yAngle > 15 && !_rightTurnCaptured) {
-      setState(() {
-        _headPosition = 'Right';
-        _rightTurnCaptured = true;
-      });
-      _capturePhoto(type: 'right');
-    } else if (yAngle < -15 && !_leftTurnCaptured) {
-      setState(() {
-        _headPosition = 'Left';
-        _leftTurnCaptured = true;
-      });
-      _capturePhoto(type: 'left');
-    } else {
+    // RIGHT TURN
+    if (yAngle > 25) {
+      _rightStableCount++;
+      _leftStableCount = 0;
+
+      if (_rightStableCount >= REQUIRED_STABLE_FRAMES &&
+          !_rightTurnCaptured) {
+        setState(() {
+          _headPosition = 'Right';
+          _rightTurnCaptured = true;
+        });
+        _capturePhoto(type: 'right');
+      }
+    }
+
+    // LEFT TURN
+    else if (yAngle < -25) {
+      _leftStableCount++;
+      _rightStableCount = 0;
+
+      if (_leftStableCount >= REQUIRED_STABLE_FRAMES &&
+          !_leftTurnCaptured) {
+        setState(() {
+          _headPosition = 'Left';
+          _leftTurnCaptured = true;
+        });
+        _capturePhoto(type: 'left');
+      }
+    }
+
+    // CENTER
+    else {
+      _leftStableCount = 0;
+      _rightStableCount = 0;
       _headPosition = 'Center';
     }
 
+    // AFTER BOTH CAPTURED
     if (_leftTurnCaptured && _rightTurnCaptured && !_headTurnCaptured) {
       _headTurnCaptured = true;
       _capturePhoto(type: 'head');
@@ -192,8 +217,10 @@ class _SelfieCaptureState extends State<SelfieCapture> {
 
       if (_blinkCount == 1) {
         _capturePhoto(type: 'blink1');
+        debugPrint("Blink 1 captured. blink1");
       } else if (_blinkCount == 3) {
         _capturePhoto(type: 'blink3');
+        debugPrint("Blink 3 captured. blink3");
       }
 
       if (_blinkCount >= 3 && !_cameraStopped) {
@@ -224,12 +251,13 @@ class _SelfieCaptureState extends State<SelfieCapture> {
       );
       await File(image.path).copy(fileName);
       setState(() {
+        // In _capturePhoto, I updated the logic to only set the specific paths:
         if (type == 'blink1') {
           _firstBlinkPhotoPath = fileName;
-        } else if (type == 'blink2') {
-          debugPrint("Blink 2 captured.");
+          debugPrint("Blink 1 captured. $_firstBlinkPhotoPath");
         } else if (type == 'blink3') {
           _thirdBlinkPhotoPath = fileName;
+          debugPrint("Blink 3 captured. $_thirdBlinkPhotoPath");
         } else if (type == 'head') {
           _headTurnPhotoPath = fileName;
         } else if (type == 'left') {
@@ -365,9 +393,9 @@ class _SelfieCaptureState extends State<SelfieCapture> {
     return Row(
       mainAxisAlignment: MainAxisAlignment.center,
       children: [
-        _stepIcon(Icons.turn_left, _leftTurnCaptured),
+        _stepIcon(Icons.turn_right, _leftTurnCaptured),
         _stepLine(_leftTurnCaptured),
-        _stepIcon(Icons.turn_right, _rightTurnCaptured),
+        _stepIcon(Icons.turn_left, _rightTurnCaptured),
         _stepLine(_rightTurnCaptured),
         _stepIcon(Icons.sentiment_satisfied, hasSmiled),
         _stepLine(hasSmiled),
@@ -396,13 +424,20 @@ class _SelfieCaptureState extends State<SelfieCapture> {
   }
 
   Widget _buildStatusPanel() {
-    String instruction = "Center your face";
+    String instruction = "";
     Color statusColor = Colors.blue;
 
-    if (!_leftTurnCaptured) {
-      instruction = "Turn Head Left";
-    } else if (!_rightTurnCaptured) {
+    if (_cameraStopped) {
+      instruction = "Success! Capture complete";
+      statusColor = Colors.green;
+    } else if (_currentFace == null && !_leftTurnCaptured) {
+      // Only force centering at the very beginning
+      instruction = "Center your face in the frame";
+      statusColor = Colors.red;
+    } else if (!_leftTurnCaptured) {
       instruction = "Turn Head Right";
+    } else if (!_rightTurnCaptured) {
+      instruction = "Turn Head Left";
     } else if (!hasSmiled) {
       instruction = "Now Smile!";
       statusColor = Colors.orange;
