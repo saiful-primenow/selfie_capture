@@ -217,15 +217,12 @@ class _SelfieCaptureState extends State<SelfieCapture> {
 
       if (_blinkCount == 1) {
         _capturePhoto(type: 'blink1');
-        debugPrint("Blink 1 captured. blink1");
+        debugPrint("Blink 1 triggered");
       } else if (_blinkCount == 3) {
         _capturePhoto(type: 'blink3');
-        debugPrint("Blink 3 captured. blink3");
+        debugPrint("Blink 3 triggered");
       }
 
-      if (_blinkCount >= 3 && !_cameraStopped) {
-        _stopCamera();
-      }
       setState(() {});
     } else if (currentlyOpen && _eyesWereClosed) {
       // Transition from Closed to Open
@@ -251,13 +248,13 @@ class _SelfieCaptureState extends State<SelfieCapture> {
       );
       await File(image.path).copy(fileName);
       setState(() {
-        // In _capturePhoto, I updated the logic to only set the specific paths:
         if (type == 'blink1') {
           _firstBlinkPhotoPath = fileName;
-          debugPrint("Blink 1 captured. $_firstBlinkPhotoPath");
+          debugPrint("Blink 1 path set: $_firstBlinkPhotoPath");
         } else if (type == 'blink3') {
           _thirdBlinkPhotoPath = fileName;
-          debugPrint("Blink 3 captured. $_thirdBlinkPhotoPath");
+          _cameraStopped = true; // Immediately update UI to show the image
+          debugPrint("Blink 3 path set: $_thirdBlinkPhotoPath");
         } else if (type == 'head') {
           _headTurnPhotoPath = fileName;
         } else if (type == 'left') {
@@ -265,21 +262,20 @@ class _SelfieCaptureState extends State<SelfieCapture> {
         } else if (type == 'right') {
           _rightTurnPhotoPath = fileName;
         }
-
-        if (_firstBlinkPhotoPath != null &&
-            _thirdBlinkPhotoPath != null &&
-            _headTurnPhotoPath != null) {
-          message = "Almost Done";
-          _stopCamera();
-
-          if (showImage != null) {
-            convertImageToBase64(showImage!, (base64) {
-              convertedImage = base64;
-              print("Base64 result: $base64");
-            });
-          }
-        }
       });
+
+      // Stop camera properly in the background
+      if (type == 'blink3') {
+        message = "Almost Done";
+        _stopCamera(); // No need to await here as we already set _cameraStopped
+
+        if (_thirdBlinkPhotoPath != null) {
+          convertImageToBase64(_thirdBlinkPhotoPath!, (base64) {
+            convertedImage = base64;
+            debugPrint("Base64 conversion complete for Blink 3");
+          });
+        }
+      }
     } catch (e) {
       if (kDebugMode) {
         debugPrint('Error capturing $type photo: $e');
@@ -507,16 +503,14 @@ class _SelfieCaptureState extends State<SelfieCapture> {
                     ),
                     clipBehavior: Clip.antiAlias,
                     child: (_cameraStopped)
-                        ? (showImage != null
+                        ? (_thirdBlinkPhotoPath != null || showImage != null
                               ? Image.file(
-                                  File(
-                                    _thirdBlinkPhotoPath ?? showImage!,
-                                  ),
+                                  File(_thirdBlinkPhotoPath ?? showImage!),
                                   fit: BoxFit.cover,
                                   width: double.infinity,
                                   height: double.infinity,
                                 )
-                              : const Center(child: Text("")))
+                              : const Center(child: Text("Processing...")))
                         : (_controller.value.isInitialized)
                               ? FittedBox(
                                   fit: BoxFit.cover,
