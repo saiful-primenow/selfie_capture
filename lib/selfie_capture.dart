@@ -139,11 +139,17 @@ class _SelfieCaptureState extends State<SelfieCapture> {
   void _updateHeadPosition() {
     if (_currentFace == null) return;
 
-    final yAngle = _currentFace!.headEulerAngleY ?? 0;
+    double yAngle = _currentFace!.headEulerAngleY ?? 0;
 
-    // STEP 1: RIGHT TURN FIRST
+    // ML Kit's y-angle can be inverted on iOS compared to Android for the front camera
+    // due to differences in mirroring and sensor orientation.
+    if (Platform.isIOS) {
+      yAngle = -yAngle;
+    }
+
+    // STEP 1: LEFT TURN (Note: _rightTurnCaptured is used to track this first step)
     if (!_rightTurnCaptured) {
-      if (yAngle > 25) {
+      if (yAngle > 15) {
         _rightStableCount++;
         if (_rightStableCount >= REQUIRED_STABLE_FRAMES) {
           setState(() {
@@ -157,9 +163,9 @@ class _SelfieCaptureState extends State<SelfieCapture> {
       return; // STOP here until right is done
     }
 
-    // STEP 2: LEFT TURN AFTER RIGHT
+    // STEP 2: RIGHT TURN AFTER LEFT (Note: _leftTurnCaptured is used to track this second step)
     if (!_leftTurnCaptured) {
-      if (yAngle < -25) {
+      if (yAngle < -15) {
         _leftStableCount++;
         if (_leftStableCount >= REQUIRED_STABLE_FRAMES) {
           setState(() {
@@ -485,39 +491,56 @@ class _SelfieCaptureState extends State<SelfieCapture> {
                   Container(
                     width: 250,
                     height: 250,
-                    decoration: BoxDecoration(
+                    decoration: const BoxDecoration(
                       shape: BoxShape.circle,
-                      // border: Border.all(
-                      //   color: _cameraStopped ? Colors.green : Colors.blue.withAlpha(126),
-                      //   width: 4,
-                      // ),
                     ),
                     clipBehavior: Clip.antiAlias,
-                    child: (_cameraStopped)
-                        ? (_thirdBlinkPhotoPath != null || showImage != null
-                              ? Image.file(
-                                  File(_thirdBlinkPhotoPath ?? showImage!),
-                                  fit: BoxFit.cover,
-                                  width: double.infinity,
-                                  height: double.infinity,
-                                )
-                              : const Center(child: Text("Processing...")))
-                        : (_controller.value.isInitialized)
-                        ? FittedBox(
-                            fit: BoxFit.cover,
-                            child: SizedBox(
-                              width: _controller.value.previewSize!.height,
-                              height: _controller.value.previewSize!.width,
-                              child: CameraPreview(_controller),
-                            ),
-                          )
-                        : const Center(
-                            child: CircularProgressIndicator(
-                              valueColor: AlwaysStoppedAnimation<Color>(
-                                Colors.red,
+                    child: Stack(
+                      children: [
+                        Positioned.fill(
+                          child: (_cameraStopped)
+                              ? (_thirdBlinkPhotoPath != null ||
+                                      showImage != null
+                                  ? Image.file(
+                                      File(_thirdBlinkPhotoPath ?? showImage!),
+                                      fit: BoxFit.cover,
+                                    )
+                                  : const Center(child: Text("Processing...")))
+                              : (_controller.value.isInitialized)
+                                  ? FittedBox(
+                                      fit: BoxFit.cover,
+                                      child: SizedBox(
+                                        width: _controller
+                                            .value.previewSize!.height,
+                                        height:
+                                            _controller.value.previewSize!.width,
+                                        child: CameraPreview(_controller),
+                                      ),
+                                    )
+                                  : const Center(
+                                      child: CircularProgressIndicator(
+                                        valueColor:
+                                            AlwaysStoppedAnimation<Color>(
+                                          Colors.red,
+                                        ),
+                                      ),
+                                    ),
+                        ),
+                        if (_controller.value.isInitialized || _cameraStopped)
+                          Positioned.fill(
+                            child: Padding(
+                              padding: const EdgeInsets.all(2.0),
+                              child: CircularProgressIndicator(
+                                value: _cameraStopped ? 1.0 : (_blinkCount / 3),
+                                strokeWidth: 14,
+                                backgroundColor: Color(0xFFE5E7EA),
+                                valueColor: const AlwaysStoppedAnimation<Color>(
+                                    Color(0xFFFAB0FF)),
                               ),
                             ),
                           ),
+                      ],
+                    ),
                   ),
 
                   const SizedBox(height: 111),

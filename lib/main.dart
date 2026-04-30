@@ -5,6 +5,7 @@ import 'package:selfie_capture/selfie_capture.dart';
 late List<CameraDescription> cameras;
 
 void main() async {
+  WidgetsFlutterBinding.ensureInitialized();
   cameras = await availableCameras();
   runApp(const MyApp());
 }
