@@ -1,6 +1,7 @@
 import 'package:camera/camera.dart';
 import 'package:flutter/material.dart';
 import 'package:selfie_capture/selfie_capture.dart';
+import 'nid/nid_camera_screen.dart';
 
 late List<CameraDescription> cameras;
 
@@ -39,15 +40,31 @@ class HomeScreen extends StatelessWidget {
     return Scaffold(
       appBar: AppBar(title: Text('Camera Dashboard'), centerTitle: true),
       body: Center(
-        child: TextButton.icon(
-          onPressed: () => Navigator.push(
-            context,
-            MaterialPageRoute(
-              builder: (context) => SelfieCapture(camera: camera),
+        child: Column(
+          mainAxisAlignment: .center,
+          children: [
+            TextButton.icon(
+              onPressed: () => Navigator.push(
+                context,
+                MaterialPageRoute(
+                  builder: (context) => SelfieCapture(camera: camera),
+                ),
+              ),
+              label: Text('Check Liveness'),
+              icon: Icon(Icons.camera_alt_outlined),
             ),
-          ),
-          label: Text('Capture Photo'),
-          icon: Icon(Icons.camera_alt_outlined),
+
+            TextButton.icon(
+              onPressed: () => Navigator.push(
+                context,
+                MaterialPageRoute(
+                  builder: (context) => NidCameraScreen(),
+                ),
+              ),
+              label: Text('Capture NID'),
+              icon: Icon(Icons.camera_alt_outlined),
+            ),
+          ],
         ),
       ),
     );
