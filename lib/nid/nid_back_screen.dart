@@ -37,14 +37,14 @@ class NidBackUI extends StatelessWidget {
           ? GestureDetector(
               onTap: onCapture,
               child: Container(
-                height: 80,
-                width: 80,
+                height: 66,
+                width: 66,
                 decoration: BoxDecoration(
                   shape: BoxShape.circle,
                   border: Border.all(color: Colors.white, width: 4),
                 ),
                 child: const Center(
-                  child: Icon(Icons.circle, color: Colors.white, size: 60),
+                  child: Icon(Icons.circle, color: Colors.white, size: 56),
                 ),
               ),
             )
@@ -77,8 +77,10 @@ class NidBackUI extends StatelessWidget {
                         ),
                       ),
                       onPressed: onContinue,
-                      child: const Text("Continue",
-                          style: TextStyle(color: Colors.white)),
+                      child: const Text(
+                        "Continue",
+                        style: TextStyle(color: Colors.white),
+                      ),
                     ),
                   ),
                 ],
