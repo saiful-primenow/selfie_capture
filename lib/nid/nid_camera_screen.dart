@@ -21,7 +21,6 @@ class _NidCameraScreenState extends State<NidCameraScreen> {
   bool _isFrontConfirmed = false;
 
   XFile? _backImage;
-  bool _isBackConfirmed = false;
 
   @override
   void initState() {
@@ -82,13 +81,38 @@ class _NidCameraScreenState extends State<NidCameraScreen> {
   void _resetBack() {
     setState(() {
       _backImage = null;
-      _isBackConfirmed = false;
     });
   }
 
-  void _confirmBack() {
+  Future<void> _confirmBack() async {
+    await _controller?.dispose();
+    _controller = null;
     setState(() {
-      _isBackConfirmed = true;
+      _isInitialized = false;
+    });
+
+    if (!mounted) return;
+
+    Navigator.push(
+      context,
+      MaterialPageRoute(
+        builder: (context) => NidVerifyScreen(
+          frontImage: _frontImage?.path,
+          backImage: _backImage?.path,
+          onRetake: () {
+            _resetAll();
+            Navigator.pop(context);
+          },
+          onConfirm: () {
+            Navigator.pop(context); // Pop Verify
+            Navigator.pop(context); // Pop Camera
+          },
+        ),
+      ),
+    ).then((_) {
+      if (mounted && _controller == null) {
+        _setupCamera();
+      }
     });
   }
 
@@ -97,7 +121,6 @@ class _NidCameraScreenState extends State<NidCameraScreen> {
       _frontImage = null;
       _isFrontConfirmed = false;
       _backImage = null;
-      _isBackConfirmed = false;
     });
   }
 
@@ -111,18 +134,6 @@ class _NidCameraScreenState extends State<NidCameraScreen> {
   Widget build(BuildContext context) {
     if (!_isInitialized) {
       return const Scaffold(body: Center(child: CircularProgressIndicator()));
-    }
-
-    if (_isBackConfirmed) {
-      return NidVerifyScreen(
-        frontImage: _frontImage?.path,
-        backImage: _backImage?.path,
-        onRetake: _resetAll,
-        onConfirm: () {
-          // Final action
-          Navigator.pop(context);
-        },
-      );
     }
 
     return Scaffold(

@@ -17,23 +17,17 @@ class MyApp extends StatelessWidget {
   // This widget is the root of your application.
   @override
   Widget build(BuildContext context) {
-    final frontCamera = cameras.firstWhere(
-      (camera) => camera.lensDirection == CameraLensDirection.front,
-      orElse: () => cameras.first,
-    );
     return MaterialApp(
       title: 'Flutter Demo',
       debugShowCheckedModeBanner: false,
       theme: ThemeData(colorScheme: .fromSeed(seedColor: Colors.deepPurple)),
-      home: HomeScreen(camera: frontCamera),
+      home: HomeScreen(),
     );
   }
 }
 
 class HomeScreen extends StatelessWidget {
-  final CameraDescription camera;
-
-  const HomeScreen({super.key, required this.camera});
+  const HomeScreen({super.key});
 
   @override
   Widget build(BuildContext context) {
@@ -44,12 +38,19 @@ class HomeScreen extends StatelessWidget {
           mainAxisAlignment: .center,
           children: [
             TextButton.icon(
-              onPressed: () => Navigator.push(
-                context,
-                MaterialPageRoute(
-                  builder: (context) => SelfieCapture(camera: camera),
-                ),
-              ),
+              onPressed: () {
+                final frontCamera = cameras.firstWhere(
+                  (camera) => camera.lensDirection == CameraLensDirection.front,
+                  orElse: () => cameras.first,
+                );
+
+                Navigator.push(
+                  context,
+                  MaterialPageRoute(
+                    builder: (context) => SelfieCapture(camera: frontCamera),
+                  ),
+                );
+              },
               label: Text('Check Liveness'),
               icon: Icon(Icons.camera_alt_outlined),
             ),
@@ -57,9 +58,7 @@ class HomeScreen extends StatelessWidget {
             TextButton.icon(
               onPressed: () => Navigator.push(
                 context,
-                MaterialPageRoute(
-                  builder: (context) => NidCameraScreen(),
-                ),
+                MaterialPageRoute(builder: (context) => NidCameraScreen()),
               ),
               label: Text('Capture NID'),
               icon: Icon(Icons.camera_alt_outlined),

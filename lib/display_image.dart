@@ -1,6 +1,8 @@
 import 'dart:io';
 import 'package:flutter/material.dart';
 
+import 'main.dart';
+
 class DisplayImageScreen extends StatelessWidget {
   final String? blink1Path;
   final String? blink3Path;
@@ -55,7 +57,11 @@ class DisplayImageScreen extends StatelessWidget {
                   borderRadius: BorderRadius.circular(8),
                 ),
               ),
-              onPressed: () => Navigator.pop(context),
+              onPressed: () => Navigator.pushAndRemoveUntil(
+                context,
+                MaterialPageRoute(builder: (_) => HomeScreen()),
+                    (route) => false,
+              ),
               child: const Text(
                 "Go Back",
                 style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold),
