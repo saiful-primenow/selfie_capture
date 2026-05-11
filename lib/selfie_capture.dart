@@ -5,6 +5,7 @@ import 'package:camera/camera.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:google_mlkit_face_detection/google_mlkit_face_detection.dart';
+import 'package:google_mlkit_image_labeling/google_mlkit_image_labeling.dart';
 import 'package:path/path.dart' as path;
 import 'package:image/image.dart' as img;
 import 'package:path_provider/path_provider.dart';
@@ -43,13 +44,15 @@ class _SelfieCaptureState extends State<SelfieCapture> {
   int _leftStableCount = 0;
   int _rightStableCount = 0;
 
+  final _imageLabeler = ImageLabeler(options: ImageLabelerOptions(confidenceThreshold: 0.5));
+  bool _isGlassesDetected = false;
+  bool _isScreenDetected = false;
+
   // Liveness Flow Variables
   final List<String> _steps = [];
   int _currentStepIndex = 0;
 
-  static const int REQUIRED_STABLE_FRAMES = 1; //5;
-
-  // bool videoDetected = false;
+  static const int REQUIRED_STABLE_FRAMES = 1;
   String message = "Blink Your Eyes";
 
   final _faceDetector = FaceDetector(
@@ -133,10 +136,53 @@ class _SelfieCaptureState extends State<SelfieCapture> {
 
     final faces = await _faceDetector.processImage(inputImage);
 
+    // Check for glasses/sunglasses and screens (potential video/spoof)
+    if (faces.length == 1) {
+      final face = faces.first;
+      final labels = await _imageLabeler.processImage(inputImage);
+
+      _isGlassesDetected = labels.any((label) {
+        final l = label.label.toLowerCase();
+        return (l.contains('glasses') || l.contains('sunglasses')) &&
+            label.confidence > 0.8;
+      });
+
+      _isScreenDetected = labels.any((label) {
+        final l = label.label.toLowerCase();
+        return l.contains('monitor') ||
+            l.contains('screen') ||
+            l.contains('television') ||
+            l.contains('display') ||
+            l.contains('phone') ||
+            l.contains('tablet') ||
+            l.contains('laptop') ||
+            l.contains('electronics');
+      });
+
+      // Heuristic: If face is too close (occupies > 80% of frame),
+      // it's often a sign of spoofing or bad framing where screen edges are hidden.
+      final double faceWidth = face.boundingBox.width;
+      final double frameWidth = image.width.toDouble();
+      if ((faceWidth / frameWidth) > 0.80) {
+        _isScreenDetected = true;
+      }
+    } else {
+      _isGlassesDetected = false;
+      _isScreenDetected = false;
+    }
+
     setState(() {
       if (faces.length == 1) {
-        _currentFace = faces.first;
-        _processCurrentStep();
+        if (_isGlassesDetected) {
+          message = "Please remove your glasses";
+          _currentFace = null;
+        } else if (_isScreenDetected) {
+          message = "Digital screen detected. Use a real face.";
+          _currentFace = null;
+        } else {
+          _currentFace = faces.first;
+          _processCurrentStep();
+        }
       } else {
         _currentFace = null;
         if (faces.length > 1) {
@@ -389,6 +435,7 @@ class _SelfieCaptureState extends State<SelfieCapture> {
   void dispose() {
     _controller.dispose();
     _faceDetector.close();
+    _imageLabeler.close();
     super.dispose();
   }
 
@@ -443,7 +490,13 @@ class _SelfieCaptureState extends State<SelfieCapture> {
       instruction = "Success! Capture complete";
       statusColor = Colors.green;
     } else if (_currentFace == null) {
-      instruction = "Center your face in the frame";
+      if (_isGlassesDetected) {
+        instruction = "Please remove your glasses";
+      } else if (_isScreenDetected) {
+        instruction = "Digital screen detected";
+      } else {
+        instruction = "Center your face in the frame";
+      }
       statusColor = Colors.red;
     } else if (_currentStepIndex < _steps.length) {
       final step = _steps[_currentStepIndex];
