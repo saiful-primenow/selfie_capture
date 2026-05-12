@@ -4,19 +4,30 @@ import 'dart:io';
 import 'package:camera/camera.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
-import 'package:google_mlkit_face_detection/google_mlkit_face_detection.dart';
+import 'package:google_mlkit_face_detection/google_mlkit_face_detection.dart' as fd;
 import 'package:google_mlkit_image_labeling/google_mlkit_image_labeling.dart';
-import 'package:path/path.dart' as path;
 import 'package:image/image.dart' as img;
+import 'package:path/path.dart' as path;
 import 'package:path_provider/path_provider.dart';
 
 import 'action_button.dart';
 import 'display_image.dart';
+import 'liveness/liveness_orchestrator.dart';
+import 'liveness/liveness_provider.dart';
+import 'liveness/liveness_types.dart';
+import 'liveness/mlkit_precheck_engine.dart';
 
 class SelfieCapture extends StatefulWidget {
-  final CameraDescription camera;
+  const SelfieCapture({
+    super.key,
+    required this.camera,
+    this.livenessProvider,
+    this.enableDebugBypass = false,
+  });
 
-  const SelfieCapture({super.key, required this.camera});
+  final CameraDescription camera;
+  final LivenessProvider? livenessProvider;
+  final bool enableDebugBypass;
 
   @override
   State<SelfieCapture> createState() => _SelfieCaptureState();
@@ -24,276 +35,323 @@ class SelfieCapture extends StatefulWidget {
 
 class _SelfieCaptureState extends State<SelfieCapture> {
   late CameraController _controller;
-  late Future<void> _initializeControllerFuture;
   bool _isDetecting = false;
   bool _isCapturing = false;
   bool _cameraStopped = false;
   bool _cameraStreaming = false;
-  bool hasSmiled = false;
-  Face? _currentFace;
-  bool loading = false;
-  int _blinkCount = 0;
-  bool _eyesWereClosed = false; // Added for robust blink detection
+  String _status = 'Initializing camera...';
+
   String? _firstBlinkPhotoPath;
   String? _thirdBlinkPhotoPath;
-  String? _headTurnPhotoPath;
   String? _leftTurnPhotoPath;
   String? _rightTurnPhotoPath;
-  String? showImage;
-  String? convertedImage = "";
-  int _leftStableCount = 0;
-  int _rightStableCount = 0;
+  String? _headTurnPhotoPath;
+  String? _finalImageBase64;
 
-  final _imageLabeler = ImageLabeler(options: ImageLabelerOptions(confidenceThreshold: 0.5));
-  bool _isGlassesDetected = false;
+  fd.FaceDetector? _faceDetector;
+  late final ImageLabeler _imageLabeler;
+  late final LivenessOrchestrator _orchestrator;
+  bool _isSunglassesDetected = false;
   bool _isScreenDetected = false;
+  bool _isHeadCapDetected = false;
+  bool _isMaskDetected = false;
 
-  // Liveness Flow Variables
-  final List<String> _steps = [];
-  int _currentStepIndex = 0;
-
-  static const int REQUIRED_STABLE_FRAMES = 1;
-  String message = "Blink Your Eyes";
-
-  final _faceDetector = FaceDetector(
-    options: FaceDetectorOptions(
-      performanceMode: FaceDetectorMode.fast,
-      enableLandmarks: true,
-      enableContours: true,
-      enableClassification: true,
-      enableTracking: true,
-      minFaceSize: 0.15,
-    ),
-  );
+  LivenessPayload? _payload;
+  bool _providerInProgress = false;
 
   @override
   void initState() {
     super.initState();
+    _faceDetector = fd.FaceDetector(
+      options: fd.FaceDetectorOptions(
+        performanceMode: fd.FaceDetectorMode.fast,
+        enableLandmarks: false,
+        enableContours: false,
+        enableClassification: true,
+        enableTracking: true,
+        minFaceSize: 0.15,
+      ),
+    );
+    _imageLabeler = ImageLabeler(
+      options: ImageLabelerOptions(confidenceThreshold: 0.55),
+    );
+
+    _orchestrator = LivenessOrchestrator(
+      precheckEngine: MLKitPrecheckEngine(requiredStableFrames: 1),
+      provider: widget.livenessProvider ?? MockLivenessProvider(),
+      debugBypass: LivenessSecurity.isDebugBypassEnabled(
+        bypassRequested: widget.enableDebugBypass,
+      ),
+    );
+
+    _setupCamera();
+  }
+
+  Future<void> _setupCamera() async {
     _controller = CameraController(
       widget.camera,
       ResolutionPreset.medium,
       enableAudio: false,
       imageFormatGroup: Platform.isAndroid
-          ? ImageFormatGroup
-                .nv21 // for Android
+          ? ImageFormatGroup.nv21
           : ImageFormatGroup.bgra8888,
     );
-    _initializeControllerFuture = _controller.initialize().then((_) async {
-      if (!mounted) return;
-      _setupRandomSteps();
-      setState(() {});
-      _startImageStream();
+    await _controller.initialize();
+    await _orchestrator.start();
+    if (!mounted) return;
+    setState(() {
+      _status = 'Center your face with both eyes visible';
     });
-    _initializeControllerFuture;
-  }
-
-  void _setupRandomSteps() {
-    _steps.clear();
-    final allSteps = ['left', 'right', 'smile', 'blink'];
-    allSteps.shuffle();
-    _steps.addAll(allSteps);
-    _currentStepIndex = 0;
-    debugPrint("Steps initialized: $_steps");
+    _startImageStream();
   }
 
   void _startImageStream() {
     _controller.startImageStream((CameraImage image) {
-      if (_isDetecting || _cameraStopped) return;
+      if (_isDetecting || _cameraStopped || _providerInProgress) return;
       _isDetecting = true;
-
-      debugPrint("Image format: ${image.format.group.toString()}");
-
-      _processCameraImage(image).then((_) {
-        _isDetecting = false;
-      });
+      _processCameraImage(image).whenComplete(() => _isDetecting = false);
     });
     _cameraStreaming = true;
   }
 
-  List<double> brightnessHistory = [];
-
   Future<void> _processCameraImage(CameraImage image) async {
-    if (_cameraStopped) return;
-
-    final WriteBuffer allBytes = WriteBuffer();
-    for (Plane plane in image.planes) {
-      allBytes.putUint8List(plane.bytes);
-    }
-
-    final bytes = allBytes.done().buffer.asUint8List();
-
-    final inputImage = InputImage.fromBytes(
+    final bytes = _collectBytes(image);
+    final faceInputImage = fd.InputImage.fromBytes(
       bytes: bytes,
-      metadata: InputImageMetadata(
+      metadata: fd.InputImageMetadata(
         size: Size(image.width.toDouble(), image.height.toDouble()),
-        rotation: _rotationIntToImageRotation(widget.camera.sensorOrientation),
-        format:
-            InputImageFormatValue.fromRawValue(image.format.raw) ??
-            InputImageFormat.nv21,
+        rotation: _rotationIntToFaceRotation(widget.camera.sensorOrientation),
+        format: fd.InputImageFormatValue.fromRawValue(image.format.raw) ??
+            fd.InputImageFormat.nv21,
         bytesPerRow: image.planes[0].bytesPerRow,
       ),
     );
 
-    final faces = await _faceDetector.processImage(inputImage);
+    final faces = await (_faceDetector?.processImage(faceInputImage) ??
+        Future.value(<fd.Face>[]));
+    if (!mounted || _cameraStopped) return;
 
-    // Check for glasses/sunglasses and screens (potential video/spoof)
-    if (faces.length == 1) {
-      final face = faces.first;
-      final labels = await _imageLabeler.processImage(inputImage);
-
-      _isGlassesDetected = labels.any((label) {
-        final l = label.label.toLowerCase();
-        return (l.contains('glasses') || l.contains('sunglasses')) &&
-            label.confidence > 0.8;
+    final primaryFaceCount = faces.length;
+    if (primaryFaceCount == 1) {
+      final labels = await _imageLabeler.processImage(faceInputImage);
+      _isSunglassesDetected = labels.any((label) {
+        final value = label.label.toLowerCase();
+        return (value.contains('sunglasses') || value.contains('glasses')) &&
+            label.confidence >= 0.75;
       });
 
       _isScreenDetected = labels.any((label) {
-        final l = label.label.toLowerCase();
-        return l.contains('monitor') ||
-            l.contains('screen') ||
-            l.contains('television') ||
-            l.contains('display') ||
-            l.contains('phone') ||
-            l.contains('tablet') ||
-            l.contains('laptop') ||
-            l.contains('electronics');
+        final value = label.label.toLowerCase();
+        return (value.contains('screen') ||
+                value.contains('monitor') ||
+                value.contains('display') ||
+                value.contains('television') ||
+                value.contains('laptop') ||
+                value.contains('tablet') ||
+                value.contains('phone')) &&
+            label.confidence >= 0.60;
       });
 
-      // Heuristic: If face is too close (occupies > 80% of frame),
-      // it's often a sign of spoofing or bad framing where screen edges are hidden.
-      final double faceWidth = face.boundingBox.width;
-      final double frameWidth = image.width.toDouble();
-      if ((faceWidth / frameWidth) > 0.80) {
-        _isScreenDetected = true;
-      }
+      _isHeadCapDetected = labels.any((label) {
+        final value = label.label.toLowerCase();
+        return (value.contains('cap') ||
+                value.contains('hat') ||
+                value.contains('headwear') ||
+                value.contains('helmet') ||
+                value.contains('beanie') ||
+                value.contains('head covering')) &&
+            label.confidence >= 0.50;
+      });
+
+      _isMaskDetected = labels.any((label) {
+        final value = label.label.toLowerCase();
+        return (value.contains('mask') ||
+                value.contains('face mask') ||
+                value.contains('medical mask') ||
+                value.contains('respirator')) &&
+            label.confidence >= 0.60;
+      });
     } else {
-      _isGlassesDetected = false;
+      _isSunglassesDetected = false;
       _isScreenDetected = false;
+      _isHeadCapDetected = false;
+      _isMaskDetected = false;
     }
 
+    final hasBlockingPolicyIssue =
+        _isSunglassesDetected || _isScreenDetected || _isHeadCapDetected || _isMaskDetected;
+
+    if (!mounted) return;
     setState(() {
-      if (faces.length == 1) {
-        if (_isGlassesDetected) {
-          message = "Please remove your glasses";
-          _currentFace = null;
+      if (_isSunglassesDetected) {
+        _status = 'Sunglasses detected. Please remove glasses.';
+      } else if (_isScreenDetected) {
+        _status = 'Screen-like object detected. Use live face only.';
+      } else if (_isHeadCapDetected) {
+        _status = 'Head cap detected. Please remove cap/hat.';
+      } else if (_isMaskDetected) {
+        _status = 'Mask detected. Please remove mask.';
+      }
+    });
+
+    if (hasBlockingPolicyIssue) {
+      if (_providerInProgress) {
+        setState(() {
+          _providerInProgress = false;
+        });
+      }
+      return;
+    }
+
+    final sample = _toFaceSample(
+      faces: faces,
+      frameWidth: image.width.toDouble(),
+      frameHeight: image.height.toDouble(),
+    );
+    final status = _orchestrator.evaluate(sample);
+
+    if (!mounted) return;
+    setState(() {
+      _status = status.message;
+    });
+
+    if (status.finished && !status.failed && !_providerInProgress) {
+      await _captureFinalAndVerify();
+      return;
+    }
+
+    if (status.failed) {
+      setState(() {
+        _status = status.message;
+      });
+    }
+
+  }
+
+  Uint8List _collectBytes(CameraImage image) {
+    final WriteBuffer allBytes = WriteBuffer();
+    for (final plane in image.planes) {
+      allBytes.putUint8List(plane.bytes);
+    }
+    return allBytes.done().buffer.asUint8List();
+  }
+
+  FaceSample _toFaceSample({
+    required List<fd.Face> faces,
+    required double frameWidth,
+    required double frameHeight,
+  }) {
+    if (faces.length != 1) {
+      return FaceSample(
+        timestamp: DateTime.now(),
+        faceCount: faces.length,
+        centered: false,
+        yaw: 0,
+        leftEyeOpen: 0,
+        rightEyeOpen: 0,
+        smile: 0,
+        mouthOpen: 0,
+        faceWidthRatio: 0,
+        centerX: 0,
+        centerY: 0,
+      );
+    }
+
+    final face = faces.first;
+    final box = face.boundingBox;
+    final centerX = (box.left + box.width / 2) / frameWidth;
+    final centerY = (box.top + box.height / 2) / frameHeight;
+    final centered = (centerX - 0.5).abs() < 0.32 && (centerY - 0.5).abs() < 0.32;
+
+    final yaw = Platform.isIOS
+        ? -(face.headEulerAngleY ?? 0)
+        : (face.headEulerAngleY ?? 0);
+
+    return FaceSample(
+      timestamp: DateTime.now(),
+      faceCount: 1,
+      centered: centered,
+      yaw: yaw,
+      leftEyeOpen: face.leftEyeOpenProbability ?? 0.5,
+      rightEyeOpen: face.rightEyeOpenProbability ?? 0.5,
+      smile: face.smilingProbability ?? 0,
+      mouthOpen: 0,
+      faceWidthRatio: box.width / frameWidth,
+      centerX: centerX,
+      centerY: centerY,
+    );
+  }
+
+  Future<void> _captureFinalAndVerify() async {
+    final hasBlockingPolicyIssue =
+        _isSunglassesDetected || _isScreenDetected || _isHeadCapDetected || _isMaskDetected;
+    if (hasBlockingPolicyIssue) {
+      setState(() {
+        _providerInProgress = false;
+        if (_isSunglassesDetected) {
+          _status = 'Sunglasses detected. Please remove glasses.';
         } else if (_isScreenDetected) {
-          message = "Digital screen detected. Use a real face.";
-          _currentFace = null;
+          _status = 'Screen-like object detected. Use live face only.';
+        } else if (_isHeadCapDetected) {
+          _status = 'Head cap detected. Please remove cap/hat.';
+        } else if (_isMaskDetected) {
+          _status = 'Mask detected. Please remove mask.';
+        }
+      });
+      return;
+    }
+
+    setState(() {
+      _providerInProgress = true;
+      _status = 'Precheck done. Verifying liveness...';
+    });
+
+    if (_cameraStreaming) {
+      await _controller.stopImageStream();
+      _cameraStreaming = false;
+    }
+
+    final finalPath = await _capturePhoto(type: 'blink3', returnPathOnly: true);
+    if (finalPath != null) {
+      _finalImageBase64 = await _convertImageToBase64(finalPath);
+    }
+
+    final payload = await _orchestrator.finalize(
+      sessionData: <String, dynamic>{
+        'finalImageBase64Length': _finalImageBase64?.length ?? 0,
+      },
+    );
+
+    if (!mounted) return;
+    setState(() {
+      _payload = payload;
+      _providerInProgress = false;
+    });
+
+    if (!payload.providerPassed) {
+      final reason = payload.providerMeta['reasonCode']?.toString() ?? '';
+      setState(() {
+        if (reason == 'MLKIT_ONLY_REPLAY_RISK') {
+          _status =
+              'Replay/video risk detected. ML Kit only mode cannot verify real liveness.';
         } else {
-          _currentFace = faces.first;
-          _processCurrentStep();
+          _status = 'Liveness provider rejected. Please retry.';
         }
-      } else {
-        _currentFace = null;
-        if (faces.length > 1) {
-          message = "Multiple faces detected!";
-        }
-      }
-    });
-  }
-
-  void _processCurrentStep() {
-    if (_currentStepIndex >= _steps.length || _cameraStopped) return;
-
-    final step = _steps[_currentStepIndex];
-    switch (step) {
-      case 'left':
-        _checkHeadTurn(isLeft: true);
-        break;
-      case 'right':
-        _checkHeadTurn(isLeft: false);
-        break;
-      case 'smile':
-        _checkSmile();
-        break;
-      case 'blink':
-        _checkBlink();
-        break;
+      });
+      return;
     }
-  }
 
-  void _checkHeadTurn({required bool isLeft}) {
-    double yAngle = _currentFace?.headEulerAngleY ?? 0;
-    if (Platform.isIOS) yAngle = -yAngle;
-
-    if (isLeft ? yAngle > 18 : yAngle < -18) {
-      if (isLeft) {
-        _rightStableCount++;
-        if (_rightStableCount >= REQUIRED_STABLE_FRAMES) {
-          _completeStep('left');
-        }
-      } else {
-        _leftStableCount++;
-        if (_leftStableCount >= REQUIRED_STABLE_FRAMES) {
-          _completeStep('right');
-        }
-      }
-    } else {
-      isLeft ? _rightStableCount = 0 : _leftStableCount = 0;
-    }
-  }
-
-  void _checkSmile() {
-    final smileProb = _currentFace?.smilingProbability ?? 0;
-    if (smileProb >= 0.85) {
-      _completeStep('smile');
-    }
-  }
-
-  void _checkBlink() {
-    final leftEye = _currentFace!.leftEyeOpenProbability ?? 1.0;
-    final rightEye = _currentFace!.rightEyeOpenProbability ?? 1.0;
-
-    bool currentlyClosed = leftEye < 0.15 && rightEye < 0.15;
-    bool currentlyOpen = leftEye > 0.85 && rightEye > 0.85;
-
-    if (currentlyClosed && !_eyesWereClosed && !_isCapturing) {
-      _eyesWereClosed = true;
-      _blinkCount++;
-      if (_blinkCount == 1) {
-        Future.delayed(const Duration(milliseconds: 500), () {
-          if (mounted) _capturePhoto(type: 'blink1');
-        });
-      }
-      if (_blinkCount >= 3) {
-        _completeStep('blink');
-      }
-      setState(() {});
-    } else if (currentlyOpen && _eyesWereClosed) {
-      _eyesWereClosed = false;
-      setState(() {});
-    }
-  }
-
-  void _completeStep(String type) {
+    await _stopCamera();
     setState(() {
-      _currentStepIndex++;
-
-      String captureType = type;
-      if (type == 'blink') {
-        captureType = 'blink3';
-        Future.delayed(const Duration(milliseconds: 500), () {
-          if (mounted) _capturePhoto(type: 'blink3');
-        });
-      } else {
-        if (type == 'smile') {
-          hasSmiled = true;
-          captureType = 'head';
-        }
-        _capturePhoto(type: captureType);
-      }
+      _status = 'Liveness verified successfully';
     });
   }
 
-  // Capturing photo
-  Future<void> _capturePhoto({required String type}) async {
-    if (_isCapturing || _currentFace == null || _cameraStopped) return;
-    setState(() {
-      _isCapturing = true;
-    });
+  Future<String?> _capturePhoto({required String type, bool returnPathOnly = false}) async {
+    if (_isCapturing || _cameraStopped) return null;
+    _isCapturing = true;
     try {
       await _controller.setFlashMode(FlashMode.off);
-
       final image = await _controller.takePicture();
       final directory = await getApplicationDocumentsDirectory();
       final fileName = path.join(
@@ -301,359 +359,219 @@ class _SelfieCaptureState extends State<SelfieCapture> {
         '${type}_photo_${DateTime.now().millisecondsSinceEpoch}.jpg',
       );
       await File(image.path).copy(fileName);
+      await _normalizeFrontCameraImage(fileName);
+
+      if (!mounted) return fileName;
       setState(() {
         if (type == 'blink1') {
-          _firstBlinkPhotoPath = fileName;
+          _firstBlinkPhotoPath ??= fileName;
         } else if (type == 'blink3') {
           _thirdBlinkPhotoPath = fileName;
         } else if (type == 'head') {
           _headTurnPhotoPath = fileName;
         } else if (type == 'left') {
-          _leftTurnPhotoPath = fileName;
+          _leftTurnPhotoPath ??= fileName;
         } else if (type == 'right') {
-          _rightTurnPhotoPath = fileName;
-        }
-
-        if (_currentStepIndex == _steps.length) {
-          _cameraStopped = true;
+          _rightTurnPhotoPath ??= fileName;
         }
       });
 
-      // Stop camera properly if all steps completed
-      if (_currentStepIndex == _steps.length) {
-        message = "Success! All steps complete";
-        _stopCamera();
-
-        final lastPath = fileName;
-        convertImageToBase64(lastPath, (base64) {
-          convertedImage = base64;
-          debugPrint("Final image conversion complete");
-        });
-      }
-    } catch (e) {
-      if (kDebugMode) {
-        debugPrint('Error capturing $type photo: $e');
-      }
+      if (returnPathOnly) return fileName;
+      return fileName;
+    } catch (_) {
+      return null;
     } finally {
-      setState(() {
-        _isCapturing = false;
-      });
-    }
-  }
-
-  Future<void> _stopCamera() async {
-    try {
-      if (_cameraStreaming) {
-        await _controller.stopImageStream();
-        _cameraStreaming = false;
-      }
-
-      setState(() {
-        _cameraStopped = true;
-      });
-
-      await _controller.dispose();
-    } catch (e) {
-      debugPrint('Error stopping camera: $e');
-    }
-  }
-
-  void _restartCamera() async {
-    setState(() {
-      _cameraStopped = false;
       _isCapturing = false;
-      hasSmiled = false;
-      _blinkCount = 0;
-      _firstBlinkPhotoPath = null;
-      _thirdBlinkPhotoPath = null;
-      _headTurnPhotoPath = null;
-      _leftTurnPhotoPath = null;
-      _rightTurnPhotoPath = null;
-      _setupRandomSteps();
-      message = "Blink Your Eyes";
-    });
-
-    _controller = CameraController(
-      widget.camera,
-      ResolutionPreset.medium,
-      enableAudio: false,
-      imageFormatGroup: Platform.isAndroid
-          ? ImageFormatGroup
-                .nv21 // for Android
-          : ImageFormatGroup.bgra8888,
-    );
-    _initializeControllerFuture = _controller.initialize().then((_) async {
-      if (!mounted) return;
-      setState(() {});
-      _startImageStream();
-    });
-  }
-
-  InputImageRotation _rotationIntToImageRotation(int rotation) {
-    switch (rotation) {
-      case 90:
-        return InputImageRotation.rotation90deg;
-      case 180:
-        return InputImageRotation.rotation180deg;
-      case 270:
-        return InputImageRotation.rotation270deg;
-      default:
-        return InputImageRotation.rotation0deg;
     }
   }
 
-  // image conversion
-  void convertImageToBase64(
-    String image,
-    void Function(String base64) onComplete,
-  ) {
-    final File imageFile = File(image);
-    imageFile.readAsBytes().then((bytes) {
-      final base64 = base64Encode(bytes);
-      onComplete(base64);
-    });
+  Future<void> _normalizeFrontCameraImage(String imagePath) async {
+    if (widget.camera.lensDirection != CameraLensDirection.front) {
+      return;
+    }
+
+    final file = File(imagePath);
+    final bytes = await file.readAsBytes();
+    final decoded = img.decodeImage(bytes);
+    if (decoded == null) return;
+
+    // Front camera captures are often mirrored; store as non-mirrored.
+    final corrected = img.flipHorizontal(decoded);
+    await file.writeAsBytes(img.encodeJpg(corrected, quality: 95), flush: true);
   }
 
-  Future<String> compressBase64Image(
-    String base64Image, {
-    int quality = 20,
-  }) async {
-    Uint8List imageBytes = base64Decode(base64Image);
+  Future<String> _convertImageToBase64(String imagePath) async {
+    final bytes = await File(imagePath).readAsBytes();
+    return base64Encode(bytes);
+  }
 
-    img.Image? image = img.decodeImage(imageBytes);
+  Future<String> compressBase64Image(String base64Image, {int quality = 20}) async {
+    final imageBytes = base64Decode(base64Image);
+    final image = img.decodeImage(imageBytes);
     if (image == null) {
       throw Exception('Failed to decode image');
     }
+    final compressedBytes = img.encodeJpg(image, quality: quality);
+    return base64Encode(compressedBytes);
+  }
 
-    List<int> compressedBytes = img.encodeJpg(image, quality: quality);
+  Future<void> _stopCamera() async {
+    if (_cameraStopped) return;
+    if (_cameraStreaming) {
+      await _controller.stopImageStream();
+      _cameraStreaming = false;
+    }
+    _cameraStopped = true;
+    await _controller.dispose();
+  }
 
-    String compressedBase64 = base64Encode(compressedBytes);
-    return compressedBase64;
+  Future<void> _restartCamera() async {
+    if (!_cameraStopped) {
+      await _stopCamera();
+    }
+
+    setState(() {
+      _cameraStopped = false;
+      _providerInProgress = false;
+      _payload = null;
+      _status = 'Restarted. Center your face with both eyes visible';
+      _firstBlinkPhotoPath = null;
+      _thirdBlinkPhotoPath = null;
+      _leftTurnPhotoPath = null;
+      _rightTurnPhotoPath = null;
+      _headTurnPhotoPath = null;
+      _finalImageBase64 = null;
+    });
+
+    _orchestrator.restart();
+    await _setupCamera();
+  }
+
+  fd.InputImageRotation _rotationIntToFaceRotation(int rotation) {
+    switch (rotation) {
+      case 90:
+        return fd.InputImageRotation.rotation90deg;
+      case 180:
+        return fd.InputImageRotation.rotation180deg;
+      case 270:
+        return fd.InputImageRotation.rotation270deg;
+      default:
+        return fd.InputImageRotation.rotation0deg;
+    }
   }
 
   @override
   void dispose() {
-    _controller.dispose();
-    _faceDetector.close();
+    if (!_cameraStopped) {
+      _controller.dispose();
+    }
+    _faceDetector?.close();
     _imageLabeler.close();
     super.dispose();
   }
 
-  Widget _buildStepIndicator() {
-    if (_currentStepIndex >= _steps.length || _cameraStopped) {
-      return const SizedBox.shrink();
-    }
-
-    final step = _steps[_currentStepIndex];
-    IconData icon;
-    switch (step) {
-      case 'left':
-        icon = Icons.turn_left;
-        break;
-      case 'right':
-        icon = Icons.turn_right;
-        break;
-      case 'smile':
-        icon = Icons.sentiment_satisfied;
-        break;
-      case 'blink':
-        icon = Icons.remove_red_eye;
-        break;
-      default:
-        icon = Icons.help;
-    }
-
-    return Center(child: _stepIcon(icon, false, true));
-  }
-
-  Widget _stepIcon(IconData icon, bool completed, bool isCurrent) {
-    return Container(
-      padding: const EdgeInsets.all(8),
-      decoration: BoxDecoration(
-        color: completed
-            ? Colors.green
-            : (isCurrent ? Colors.blue : Colors.grey.shade300),
-        shape: BoxShape.circle,
-        border: isCurrent
-            ? Border.all(color: Colors.blue.withAlpha(64), width: 4)
-            : null,
-      ),
-      child: Icon(icon, color: Colors.white, size: isCurrent ? 24 : 18),
-    );
-  }
-
-  Widget _buildStatusPanel() {
-    String instruction = "";
-    Color statusColor = Colors.blue;
-
-    if (_cameraStopped) {
-      instruction = "Success! Capture complete";
-      statusColor = Colors.green;
-    } else if (_currentFace == null) {
-      if (_isGlassesDetected) {
-        instruction = "Please remove your glasses";
-      } else if (_isScreenDetected) {
-        instruction = "Digital screen detected";
-      } else {
-        instruction = "Center your face in the frame";
-      }
-      statusColor = Colors.red;
-    } else if (_currentStepIndex < _steps.length) {
-      final step = _steps[_currentStepIndex];
-      statusColor = Colors.blue;
-      if (step == 'left') {
-        instruction = "Turn Head Left";
-      } else if (step == 'right') {
-        instruction = "Turn Head Right";
-      } else if (step == 'smile') {
-        instruction = "Now Smile!";
-        statusColor = Colors.orange;
-      } else if (step == 'blink') {
-        instruction = "Blink your eyes ($_blinkCount/3)";
-        statusColor = Colors.purple;
-      }
-    } else {
-      instruction = "Success! Capture complete";
-      statusColor = Colors.green;
-    }
-
-    return Column(
-      children: [
-        _buildStepIndicator(),
-        const SizedBox(height: 24),
-        Container(
-          padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 12),
-          decoration: BoxDecoration(
-            color: statusColor.withAlpha(26),
-            borderRadius: BorderRadius.circular(30),
-            border: Border.all(color: statusColor.withAlpha(128)),
-          ),
-          child: Text(
-            instruction,
-            textAlign: TextAlign.center,
-            style: TextStyle(
-              color: statusColor,
-              fontSize: 20,
-              fontWeight: FontWeight.bold,
-            ),
-          ),
-        ),
-      ],
-    );
-  }
-
   @override
   Widget build(BuildContext context) {
-    showImage =
-        _thirdBlinkPhotoPath ?? _firstBlinkPhotoPath ?? _headTurnPhotoPath;
+    final showImage = _thirdBlinkPhotoPath ?? _firstBlinkPhotoPath ?? _headTurnPhotoPath;
 
     return Scaffold(
       backgroundColor: Colors.white,
-      appBar: AppBar(title: Text("Self Live Photo"), centerTitle: true),
-      body: loading
-          ? const Center(
-              child: CircularProgressIndicator(
-                valueColor: AlwaysStoppedAnimation<Color>(Colors.red),
-              ),
-            )
-          : Center(
-              child: Column(
-                mainAxisAlignment: MainAxisAlignment.center,
-                children: [
-                  _buildStatusPanel(),
-                  const SizedBox(height: 47),
-
-                  Container(
-                    width: 250,
-                    height: 250,
-                    decoration: const BoxDecoration(shape: BoxShape.circle),
-                    clipBehavior: Clip.antiAlias,
-                    child: Stack(
-                      children: [
-                        Positioned.fill(
-                          child: (_cameraStopped)
-                              ? (_thirdBlinkPhotoPath != null ||
-                                        showImage != null
-                                    ? Image.file(
-                                        File(
-                                          _thirdBlinkPhotoPath ?? showImage!,
-                                        ),
-                                        fit: BoxFit.cover,
-                                      )
-                                    : const Center(
-                                        child: Text("Processing..."),
-                                      ))
-                              : (_controller.value.isInitialized)
-                              ? FittedBox(
-                                  fit: BoxFit.cover,
-                                  child: SizedBox(
-                                    width:
-                                        _controller.value.previewSize!.height,
-                                    height:
-                                        _controller.value.previewSize!.width,
-                                    child: CameraPreview(_controller),
-                                  ),
-                                )
-                              : const Center(
-                                  child: CircularProgressIndicator(
-                                    valueColor: AlwaysStoppedAnimation<Color>(
-                                      Colors.red,
-                                    ),
-                                  ),
-                                ),
-                        ),
-                        if (_controller.value.isInitialized || _cameraStopped)
-                          Positioned.fill(
-                            child: Padding(
-                              padding: const EdgeInsets.all(2.0),
-                              child: CircularProgressIndicator(
-                                value: _cameraStopped ? 1.0 : (_blinkCount / 3),
-                                strokeWidth: 14,
-                                backgroundColor: Color(0xFFE5E7EA),
-                                valueColor: const AlwaysStoppedAnimation<Color>(
-                                  Color(0xFFFAB0FF),
-                                ),
-                              ),
-                            ),
-                          ),
-                      ],
-                    ),
-                  ),
-
-                  const SizedBox(height: 111),
-
-                  Padding(
-                    padding: const EdgeInsets.only(bottom: 10),
-                    child: ActionButton(
-                      customPadding: 16,
-                      parentContext: context,
-                      topButtonText: "Continue",
-                      isTopButtonDisabled: !_cameraStopped,
-                      useActiveBackground: _cameraStopped,
-                      activeBackgroundImage: 'assets/button_background_2.png',
-                      disabledBackgroundImage:
-                          'assets/button_background_grey.png',
-                      showBackButton: true,
-                      backButtonText: "Restart",
-                      onBackButtonTap: _restartCamera,
-                      onTopButtonTap: () async {
-                        Navigator.push(
-                          context,
-                          MaterialPageRoute(
-                            builder: (context) => DisplayImageScreen(
-                              blink1Path: _firstBlinkPhotoPath,
-                              blink3Path: _thirdBlinkPhotoPath,
-                              leftTurnPath: _leftTurnPhotoPath,
-                              rightTurnPath: _rightTurnPhotoPath,
-                            ),
-                          ),
-                        );
-                      },
-                    ),
-                  ),
-                ],
+      appBar: AppBar(
+        title: const Text('Self Live Photo'),
+        centerTitle: true,
+        actions: [
+          if (LivenessSecurity.isDebugBypassEnabled(bypassRequested: widget.enableDebugBypass))
+            const Padding(
+              padding: EdgeInsets.only(right: 12),
+              child: Center(
+                child: Text(
+                  'TEST MODE',
+                  style: TextStyle(color: Colors.red, fontWeight: FontWeight.bold),
+                ),
               ),
             ),
+        ],
+      ),
+      body: Center(
+        child: Column(
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: [
+            Container(
+              padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 12),
+              decoration: BoxDecoration(
+                color: Colors.blue.withAlpha(25),
+                borderRadius: BorderRadius.circular(28),
+                border: Border.all(color: Colors.blue.withAlpha(80)),
+              ),
+              child: Text(
+                _status,
+                textAlign: TextAlign.center,
+                style: const TextStyle(fontSize: 16, fontWeight: FontWeight.w600),
+              ),
+            ),
+            const SizedBox(height: 34),
+            Container(
+              width: 250,
+              height: 250,
+              decoration: const BoxDecoration(shape: BoxShape.circle),
+              clipBehavior: Clip.antiAlias,
+              child: (_cameraStopped)
+                  ? (showImage != null
+                        ? Image.file(File(showImage), fit: BoxFit.cover)
+                        : const Center(child: Text('No image captured')))
+                  : (_controller.value.isInitialized
+                        ? FittedBox(
+                            fit: BoxFit.cover,
+                            child: SizedBox(
+                              width: _controller.value.previewSize!.height,
+                              height: _controller.value.previewSize!.width,
+                              child: CameraPreview(_controller),
+                            ),
+                          )
+                        : const Center(child: CircularProgressIndicator())),
+            ),
+            const SizedBox(height: 50),
+            if (_payload != null)
+              Padding(
+                padding: const EdgeInsets.symmetric(horizontal: 22),
+                child: Text(
+                  'precheckPassed=${_payload!.precheckPassed}, providerPassed=${_payload!.providerPassed}, providerMeta=${_payload!.providerMeta}',
+                  textAlign: TextAlign.center,
+                  style: const TextStyle(fontSize: 12, color: Colors.black54),
+                ),
+              ),
+            const SizedBox(height: 24),
+            Padding(
+              padding: const EdgeInsets.only(bottom: 10),
+              child: ActionButton(
+                customPadding: 16,
+                parentContext: context,
+                topButtonText: 'Continue',
+                isTopButtonDisabled: !_cameraStopped || _payload?.providerPassed != true,
+                useActiveBackground: _cameraStopped && _payload?.providerPassed == true,
+                activeBackgroundImage: 'assets/button_background_2.png',
+                disabledBackgroundImage: 'assets/button_background_grey.png',
+                showBackButton: true,
+                backButtonText: 'Restart',
+                onBackButtonTap: _restartCamera,
+                onTopButtonTap: () async {
+                  Navigator.push(
+                    context,
+                    MaterialPageRoute(
+                      builder: (context) => DisplayImageScreen(
+                        blink1Path: _firstBlinkPhotoPath,
+                        blink3Path: _thirdBlinkPhotoPath,
+                        leftTurnPath: _leftTurnPhotoPath,
+                        rightTurnPath: _rightTurnPhotoPath,
+                      ),
+                    ),
+                  );
+                },
+              ),
+            ),
+          ],
+        ),
+      ),
     );
   }
 }
