@@ -473,12 +473,12 @@ class _SelfieCaptureState extends State<SelfieCapture> {
   }
 
   Widget _buildStepIndicator() {
-    if (_currentStepIndex >= _steps.length || _cameraStopped) {
+    if (_currentStepIndex >= _steps.length || _cameraStopped || _currentFace == null) {
       return const SizedBox.shrink();
     }
 
     final step = _steps[_currentStepIndex];
-    IconData icon;
+    IconData? icon;
     switch (step) {
       case 'left':
         icon = Icons.turn_left;
@@ -492,8 +492,10 @@ class _SelfieCaptureState extends State<SelfieCapture> {
       case 'blink':
         icon = Icons.remove_red_eye;
         break;
-      default:
-        icon = Icons.help;
+    }
+
+    if (icon == null) {
+      return const SizedBox.shrink();
     }
 
     return Center(child: _stepIcon(icon, false, true));
