@@ -1,5 +1,6 @@
 import 'package:camera/camera.dart';
 import 'package:flutter/material.dart';
+import 'package:image_cropper/image_cropper.dart';
 import 'package:image_picker/image_picker.dart';
 import 'nid_front_screen.dart';
 import 'nid_back_screen.dart';
@@ -56,18 +57,97 @@ class _NidCameraScreenState extends State<NidCameraScreen> {
   Future<void> _pickImage() async {
     try {
       final ImagePicker picker = ImagePicker();
-      final XFile? image = await picker.pickImage(source: ImageSource.gallery);
+      final XFile? image = await picker.pickImage(
+        source: ImageSource.gallery,
+        imageQuality: 100,
+      );
       if (image != null) {
-        setState(() {
-          if (!_isFrontConfirmed) {
-            _frontImage = image;
-          } else {
-            _backImage = image;
-          }
-        });
+        final croppedFile = await _cropImage(image.path);
+        if (croppedFile != null) {
+          setState(() {
+            if (!_isFrontConfirmed) {
+              _frontImage = XFile(croppedFile.path);
+            } else {
+              _backImage = XFile(croppedFile.path);
+            }
+          });
+        }
       }
     } catch (e) {
       debugPrint("Error picking image: $e");
+    }
+  }
+
+  /*Future<void> _pickAndCropImage() async {
+    try {
+      // Pick Image
+      final XFile? pickedFile = await _picker.pickImage(
+        source: ImageSource.gallery,
+        imageQuality: 100,
+      );
+
+      if (pickedFile == null) return;
+
+      // Crop Image
+      final CroppedFile? croppedFile = await ImageCropper().cropImage(
+        sourcePath: pickedFile.path,
+        compressQuality: 100,
+        uiSettings: [
+          AndroidUiSettings(
+            toolbarTitle: 'Crop Image',
+            toolbarColor: Colors.blue,
+            toolbarWidgetColor: Colors.white,
+            lockAspectRatio: false,
+          ),
+          IOSUiSettings(
+            title: 'Crop Image',
+          ),
+        ],
+      );
+
+      if (croppedFile == null) return;
+
+      if (!mounted) return;
+
+      // Navigate to Preview Screen
+      Navigator.push(
+        context,
+        MaterialPageRoute(
+          builder: (_) => PreviewImageScreen(
+            imagePath: croppedFile.path,
+          ),
+        ),
+      );
+    } catch (e) {
+      debugPrint("Error: $e");
+    }
+  }*/
+
+  Future<CroppedFile?> _cropImage(String path) async {
+    try {
+      return await ImageCropper().cropImage(
+        sourcePath: path,
+        aspectRatio: const CropAspectRatio(ratioX: 1.58, ratioY: 1.0),
+        // Standard ID Card Ratio
+        uiSettings: [
+          AndroidUiSettings(
+            toolbarTitle: 'Align NID in Frame',
+            toolbarColor: Colors.black,
+            toolbarWidgetColor: Colors.white,
+            initAspectRatio: CropAspectRatioPreset.original,
+            lockAspectRatio: false,
+            hideBottomControls: false,
+          ),
+          IOSUiSettings(
+            title: 'Align NID in Frame',
+            aspectRatioLockEnabled: false,
+            resetAspectRatioEnabled: false,
+          ),
+        ],
+      );
+    } catch (e) {
+      debugPrint("Error cropping image: $e");
+      return null;
     }
   }
 
@@ -76,13 +156,24 @@ class _NidCameraScreenState extends State<NidCameraScreen> {
 
     try {
       final image = await _controller!.takePicture();
-      setState(() {
-        if (!_isFrontConfirmed) {
-          _frontImage = image;
-        } else {
-          _backImage = image;
-        }
-      });
+      final croppedFile = await _cropImage(image.path);
+
+      if (croppedFile != null) {
+        setState(() {
+          if (!_isFrontConfirmed) {
+            _frontImage = XFile(croppedFile.path);
+          } else {
+            _backImage = XFile(croppedFile.path);
+          }
+        });
+      }
+
+      // File size in bytes
+      final int fileSize = await _frontImage!.length();
+      debugPrint("Front NID Size MB: ${(fileSize / (1024 * 1024)).toStringAsFixed(2)} MB");
+      final int fileSize2 = await _backImage!.length();
+      debugPrint("Back NID Size MB: ${(fileSize2 / (1024 * 1024)).toStringAsFixed(2)} MB");
+
     } catch (e) {
       debugPrint("Error taking picture: $e");
     }
@@ -163,7 +254,7 @@ class _NidCameraScreenState extends State<NidCameraScreen> {
       backgroundColor: Colors.black,
       body: Stack(
         children: [
-          // Live camera preview
+          // Live Feed aligned with overlay cutout
           Align(
             alignment: const Alignment(0, -0.35),
             child: SizedBox(
