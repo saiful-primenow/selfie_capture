@@ -44,9 +44,13 @@ class _SelfieCaptureState extends State<SelfieCapture> {
   int _leftStableCount = 0;
   int _rightStableCount = 0;
 
-  final _imageLabeler = ImageLabeler(options: ImageLabelerOptions(confidenceThreshold: 0.5));
+  final _imageLabeler = ImageLabeler(
+    options: ImageLabelerOptions(confidenceThreshold: 0.5),
+  );
   bool _isGlassesDetected = false;
   bool _isScreenDetected = false;
+  bool _isHeadCapDetected = false;
+  bool _isMaskDetected = false;
 
   // Liveness Flow Variables
   final List<String> _steps = [];
@@ -62,7 +66,7 @@ class _SelfieCaptureState extends State<SelfieCapture> {
       enableContours: true,
       enableClassification: true,
       enableTracking: true,
-      minFaceSize: 0.15,
+      //minFaceSize: 0.15,
     ),
   );
 
@@ -149,14 +153,35 @@ class _SelfieCaptureState extends State<SelfieCapture> {
 
       _isScreenDetected = labels.any((label) {
         final l = label.label.toLowerCase();
-        return l.contains('monitor') ||
-            l.contains('screen') ||
-            l.contains('television') ||
-            l.contains('display') ||
-            l.contains('phone') ||
-            l.contains('tablet') ||
-            l.contains('laptop') ||
-            l.contains('electronics');
+        return (l.contains('monitor') ||
+                l.contains('screen') ||
+                l.contains('television') ||
+                l.contains('display') ||
+                l.contains('phone') ||
+                l.contains('tablet') ||
+                l.contains('laptop') ||
+                l.contains('electronics')) &&
+            label.confidence >= 0.60;
+      });
+
+      _isHeadCapDetected = labels.any((label) {
+        final value = label.label.toLowerCase();
+        return (value.contains('cap') ||
+                value.contains('hat') ||
+                value.contains('headwear') ||
+                value.contains('helmet') ||
+                value.contains('beanie') ||
+                value.contains('head covering')) &&
+            label.confidence >= 0.50;
+      });
+
+      _isMaskDetected = labels.any((label) {
+        final value = label.label.toLowerCase();
+        return (value.contains('mask') ||
+                value.contains('face mask') ||
+                value.contains('medical mask') ||
+                value.contains('respirator')) &&
+            label.confidence >= 0.60;
       });
 
       // Heuristic: If face is too close (occupies > 80% of frame),
@@ -169,16 +194,24 @@ class _SelfieCaptureState extends State<SelfieCapture> {
     } else {
       _isGlassesDetected = false;
       _isScreenDetected = false;
+      _isHeadCapDetected = false;
+      _isMaskDetected = false;
     }
 
     setState(() {
       if (faces.length == 1) {
         if (_isGlassesDetected) {
           message = "Please remove your glasses";
-          _currentFace = null;
+          _currentFace == null;
+        } else if (_isHeadCapDetected) {
+          message = "Please remove your hat/cap";
+          _currentFace == null;
+        } else if (_isMaskDetected) {
+          message = "Please remove your mask";
+          _currentFace == null;
         } else if (_isScreenDetected) {
           message = "Digital screen detected. Use a real face.";
-          _currentFace = null;
+          _currentFace == null;
         } else {
           _currentFace = faces.first;
           _processCurrentStep();
@@ -491,9 +524,13 @@ class _SelfieCaptureState extends State<SelfieCapture> {
       statusColor = Colors.green;
     } else if (_currentFace == null) {
       if (_isGlassesDetected) {
-        instruction = "Please remove your glasses";
+        instruction = message;
       } else if (_isScreenDetected) {
-        instruction = "Digital screen detected";
+        instruction = message;
+      } else if (_isHeadCapDetected) {
+        instruction = message;
+      } else if (_isMaskDetected) {
+        instruction = message;
       } else {
         instruction = "Center your face in the frame";
       }
