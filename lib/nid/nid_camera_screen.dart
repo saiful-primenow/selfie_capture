@@ -1,5 +1,6 @@
 import 'package:camera/camera.dart';
 import 'package:flutter/material.dart';
+import 'package:image_picker/image_picker.dart';
 import 'nid_front_screen.dart';
 import 'nid_back_screen.dart';
 import 'nid_verify_screen.dart';
@@ -52,17 +53,39 @@ class _NidCameraScreenState extends State<NidCameraScreen> {
     );
   }
 
+  Future<void> _pickImage() async {
+    try {
+      final ImagePicker picker = ImagePicker();
+      final XFile? image = await picker.pickImage(source: ImageSource.gallery);
+      if (image != null) {
+        setState(() {
+          if (!_isFrontConfirmed) {
+            _frontImage = image;
+          } else {
+            _backImage = image;
+          }
+        });
+      }
+    } catch (e) {
+      debugPrint("Error picking image: $e");
+    }
+  }
+
   Future<void> _takePicture() async {
     if (_controller == null || !_controller!.value.isInitialized) return;
 
-    final image = await _controller!.takePicture();
-    setState(() {
-      if (!_isFrontConfirmed) {
-        _frontImage = image;
-      } else {
-        _backImage = image;
-      }
-    });
+    try {
+      final image = await _controller!.takePicture();
+      setState(() {
+        if (!_isFrontConfirmed) {
+          _frontImage = image;
+        } else {
+          _backImage = image;
+        }
+      });
+    } catch (e) {
+      debugPrint("Error taking picture: $e");
+    }
   }
 
   void _resetFront() {
@@ -140,22 +163,9 @@ class _NidCameraScreenState extends State<NidCameraScreen> {
       backgroundColor: Colors.black,
       body: Stack(
         children: [
-          // The Live Feed (Only show if not in review mode)
-          /*Positioned.fill(
-            child:
-                (_frontImage == null ||
-                    (_isFrontConfirmed && _backImage == null))
-                ? FittedBox(
-                  fit: BoxFit.cover,
-                  child: SizedBox(
-                      width: _controller!.value.previewSize!.height,
-                      height: _controller!.value.previewSize!.width,
-                      child: CameraPreview(_controller!),
-                    ),
-                )
-                : Container(color: Colors.black),
-          ),*/
-          Center(
+          // Live camera preview
+          Align(
+            alignment: const Alignment(0, -0.35),
             child: SizedBox(
               height: 220,
               width: MediaQuery.of(context).size.width * 0.85,
@@ -165,10 +175,8 @@ class _NidCameraScreenState extends State<NidCameraScreen> {
                   if (_frontImage == null ||
                       (_isFrontConfirmed && _backImage == null))
                     ClipRRect(
-                      // borderRadius: BorderRadius.circular(12), // same as 1st
                       child: FittedBox(
                         fit: BoxFit.cover,
-                        // Maintain zoom & quality like 1st camera
                         child: SizedBox(
                           width: _controller!.value.previewSize!.height,
                           height: _controller!.value.previewSize!.width,
@@ -190,6 +198,7 @@ class _NidCameraScreenState extends State<NidCameraScreen> {
               onContinue: _confirmFront,
               onBack: () => Navigator.pop(context),
               onFlashToggle: _toggleFlash,
+              onGallery: _pickImage,
               isFlashOn: _isFlashOn,
             )
           else
@@ -200,6 +209,7 @@ class _NidCameraScreenState extends State<NidCameraScreen> {
               onContinue: _confirmBack,
               onBack: _resetFront,
               onFlashToggle: _toggleFlash,
+              onGallery: _pickImage,
               isFlashOn: _isFlashOn,
             ),
         ],

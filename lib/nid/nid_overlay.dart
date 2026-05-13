@@ -8,8 +8,7 @@ class NidOverlay extends StatelessWidget {
   final Widget bottomAction;
   final String? imagePath;
   final VoidCallback onBack;
-  final VoidCallback onFlashToggle;
-  final bool isFlashOn;
+  final String title;
 
   const NidOverlay({
     super.key,
@@ -17,23 +16,26 @@ class NidOverlay extends StatelessWidget {
     required this.instruction,
     required this.bottomAction,
     required this.onBack,
-    required this.onFlashToggle,
-    required this.isFlashOn,
     this.imagePath,
+    this.title = "ID Verification",
   });
 
   @override
   Widget build(BuildContext context) {
+    const cutoutAlignment = Alignment(0, -0.35); // Moved up
+    final cutoutWidth = MediaQuery.of(context).size.width * 0.85;
+    const cutoutHeight = 220.0;
+
     return Stack(
       children: [
         if (imagePath != null)
           Align(
-            alignment: Alignment.center,
+            alignment: cutoutAlignment,
             child: Container(
-              height: 220,
-              width: MediaQuery.of(context).size.width * 0.85,
+              height: cutoutHeight,
+              width: cutoutWidth,
               decoration: BoxDecoration(
-                borderRadius: BorderRadius.circular(0),
+                borderRadius: BorderRadius.circular(4),
               ),
               clipBehavior: Clip.antiAlias,
               child: Image.file(File(imagePath!), fit: BoxFit.cover),
@@ -43,24 +45,25 @@ class NidOverlay extends StatelessWidget {
         Positioned.fill(
           child: ColorFiltered(
             colorFilter: ColorFilter.mode(
-              Colors.black.withAlpha(179),
+              Color(0xFF212121),
               BlendMode.srcOut,
             ),
             child: Stack(
               children: [
                 Container(
                   decoration: const BoxDecoration(
-                    color: Colors.black,
+                    color: Color(0xFF212121), // Dark background for controls
                     backgroundBlendMode: BlendMode.dstOut,
                   ),
                 ),
                 Align(
-                  alignment: Alignment.center,
+                  alignment: cutoutAlignment,
                   child: Container(
-                    height: 220, // Aspect ratio for ID card
-                    width: MediaQuery.of(context).size.width * 0.85,
+                    height: cutoutHeight,
+                    width: cutoutWidth,
                     decoration: BoxDecoration(
-                      color: Colors.white
+                      color: Colors.white,
+                      borderRadius: BorderRadius.circular(4),
                     ),
                   ),
                 ),
@@ -69,67 +72,98 @@ class NidOverlay extends StatelessWidget {
           ),
         ),
         // Green Corner Markers
-        Center(
+        Align(
+          alignment: cutoutAlignment,
           child: SizedBox(
-            height: 220,
-            width: MediaQuery.of(context).size.width * 0.85,
+            height: cutoutHeight,
+            width: cutoutWidth,
             child: CustomPaint(painter: CornerPainter()),
           ),
         ),
-        // UI Text Elements
+        // Header
         SafeArea(
-          child: Column(
-            children: [
-              Padding(
-                padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
-                child: Row(
-                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                  children: [
-                    IconButton(
-                      icon: const Icon(Icons.arrow_back, color: Colors.white, size: 28),
-                      onPressed: onBack,
+          child: Align(
+            alignment: Alignment.topCenter,
+            child: Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 10),
+              child: Row(
+                children: [
+                  IconButton(
+                    icon: const Icon(Icons.arrow_back, color: Colors.white, size: 28),
+                    onPressed: onBack,
+                  ),
+                  Expanded(
+                    child: Text(
+                      title,
+                      textAlign: TextAlign.center,
+                      style: const TextStyle(
+                        color: Colors.white,
+                        fontSize: 18,
+                        fontWeight: FontWeight.w500,
+                      ),
                     ),
-                    Text(
+                  ),
+                  Padding(
+                    padding: const EdgeInsets.only(right: 15),
+                    child: Text(
                       step,
                       style: const TextStyle(
                         color: Colors.white,
-                        fontSize: 20,
+                        fontSize: 16,
                         fontWeight: FontWeight.w400,
                       ),
                     ),
-                    GestureDetector(
-                      onTap: onFlashToggle,
-                      child: Container(
-                        height: 40,
-                        width: 40,
-                        decoration: const BoxDecoration(
-                          color: Color(0xFFFFF176), // Yellow circle
-                          shape: BoxShape.circle,
-                        ),
-                        child: Icon(
-                          isFlashOn ? Icons.flash_on : Icons.flash_off,
-                          color: Colors.black,
-                          size: 24,
-                        ),
-                      ),
-                    ),
-                  ],
-                ),
+                  ),
+                ],
               ),
-              const SizedBox(height: 30),
-              Text(
-                instruction,
-                style: const TextStyle(color: Colors.white, fontSize: 16, fontWeight: FontWeight.w500),
-              ),
-              const Spacer(),
-              Padding(
-                padding: const EdgeInsets.only(bottom: 40),
-                child: bottomAction,
-              ),
-            ],
+            ),
+          ),
+        ),
+        // Instruction Text (Positioned below the cutout)
+        Align(
+          alignment: const Alignment(0, 0.1), // Below the -0.35 cutout
+          child: Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 40),
+            child: _buildInstructionText(instruction),
+          ),
+        ),
+        // Bottom Actions
+        SafeArea(
+          child: Align(
+            alignment: Alignment.bottomCenter,
+            child: Padding(
+              padding: const EdgeInsets.only(bottom: 20),
+              child: bottomAction,
+            ),
           ),
         ),
       ],
+    );
+  }
+
+  Widget _buildInstructionText(String text) {
+    final parts = text.split(RegExp(r'(Front side|Back side)'));
+    if (parts.length > 1) {
+      String match = RegExp(r'(Front side|Back side)').firstMatch(text)!.group(0)!;
+      return RichText(
+        textAlign: TextAlign.center,
+        text: TextSpan(
+          style: const TextStyle(color: Colors.white, fontSize: 16),
+          children: [
+            TextSpan(text: parts[0]),
+            TextSpan(
+              text: match,
+              style: const TextStyle(fontWeight: FontWeight.bold),
+            ),
+            TextSpan(text: parts[1]),
+          ],
+        ),
+      );
+    }
+    return Text(
+      text,
+      textAlign: TextAlign.center,
+      style: const TextStyle(color: Colors.white, fontSize: 16),
     );
   }
 }
@@ -138,11 +172,12 @@ class CornerPainter extends CustomPainter {
   @override
   void paint(Canvas canvas, Size size) {
     final paint = Paint()
-      ..color = Colors.greenAccent
+      ..color = const Color(0xFF2ECC71) // More vibrant green
       ..strokeWidth = 4
+      ..strokeCap = StrokeCap.round
       ..style = PaintingStyle.stroke;
 
-    double len = 20; // Length of corner lines
+    double len = 25; // Slightly longer corner lines
     // Top Left
     canvas.drawPath(Path()..moveTo(0, len)..lineTo(0, 0)..lineTo(len, 0), paint);
     // Top Right

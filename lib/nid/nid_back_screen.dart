@@ -9,6 +9,7 @@ class NidBackUI extends StatelessWidget {
   final String? imagePath;
   final VoidCallback onBack;
   final VoidCallback onFlashToggle;
+  final VoidCallback onGallery;
   final bool isFlashOn;
 
   const NidBackUI({
@@ -16,6 +17,7 @@ class NidBackUI extends StatelessWidget {
     required this.onCapture,
     required this.onBack,
     required this.onFlashToggle,
+    required this.onGallery,
     required this.isFlashOn,
     this.onRetake,
     this.onContinue,
@@ -28,24 +30,58 @@ class NidBackUI extends StatelessWidget {
       step: "2/2",
       imagePath: imagePath,
       onBack: onBack,
-      onFlashToggle: onFlashToggle,
-      isFlashOn: isFlashOn,
       instruction: imagePath == null
           ? "Take photo of the Back side of your NID"
           : "Review your Back side photo",
       bottomAction: imagePath == null
-          ? GestureDetector(
-              onTap: onCapture,
-              child: Container(
-                height: 66,
-                width: 66,
-                decoration: BoxDecoration(
-                  shape: BoxShape.circle,
-                  border: Border.all(color: Colors.white, width: 4),
-                ),
-                child: const Center(
-                  child: Icon(Icons.circle, color: Colors.white, size: 56),
-                ),
+          ? Container(
+              margin: const EdgeInsets.symmetric(horizontal: 24),
+              padding: const EdgeInsets.symmetric(vertical: 20, horizontal: 24),
+              decoration: BoxDecoration(
+                color: const Color(0xFF181818), // Dark background for controls
+                borderRadius: BorderRadius.circular(40),
+              ),
+              child: Row(
+                mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                children: [
+                  // Gallery Button
+                  IconButton(
+                    icon: const Icon(Icons.image_outlined, color: Colors.white, size: 30),
+                    onPressed: onGallery,
+                  ),
+                  // Capture Button
+                  GestureDetector(
+                    onTap: onCapture,
+                    child: Container(
+                      height: 66,
+                      width: 66,
+                      decoration: BoxDecoration(
+                        shape: BoxShape.circle,
+                        border: Border.all(color: Colors.white, width: 4),
+                      ),
+                      child: const Center(
+                        child: Icon(Icons.circle, color: Colors.white, size: 56),
+                      ),
+                    ),
+                  ),
+                  // Flash Button
+                  GestureDetector(
+                    onTap: onFlashToggle,
+                    child: Container(
+                      height: 44,
+                      width: 44,
+                      decoration: BoxDecoration(
+                        shape: BoxShape.circle,
+                        border: Border.all(color: const Color(0xFFD4AF37), width: 1.5),
+                      ),
+                      child: Icon(
+                        isFlashOn ? Icons.flash_on : Icons.flash_off,
+                        color: const Color(0xFFD4AF37),
+                        size: 24,
+                      ),
+                    ),
+                  ),
+                ],
               ),
             )
           : Padding(
