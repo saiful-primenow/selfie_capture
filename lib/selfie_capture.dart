@@ -14,17 +14,17 @@ import 'action_button.dart';
 import 'display_image.dart';
 
 class SelfieCapture extends StatefulWidget {
-  final CameraDescription camera;
-
-  const SelfieCapture({super.key, required this.camera});
+  const SelfieCapture({super.key});
 
   @override
   State<SelfieCapture> createState() => _SelfieCaptureState();
 }
 
 class _SelfieCaptureState extends State<SelfieCapture> {
-  late CameraController _controller;
-  late Future<void> _initializeControllerFuture;
+  CameraController? _controller;
+  List<CameraDescription>? _cameras;
+  CameraDescription? _cameraDescription;
+  bool _isInitialized = false;
   bool _isDetecting = false;
   bool _isCapturing = false;
   bool _cameraStopped = false;
@@ -73,22 +73,39 @@ class _SelfieCaptureState extends State<SelfieCapture> {
   @override
   void initState() {
     super.initState();
-    _controller = CameraController(
-      widget.camera,
-      ResolutionPreset.medium,
-      enableAudio: false,
-      imageFormatGroup: Platform.isAndroid
-          ? ImageFormatGroup
-                .nv21 // for Android
-          : ImageFormatGroup.bgra8888,
-    );
-    _initializeControllerFuture = _controller.initialize().then((_) async {
-      if (!mounted) return;
-      _setupRandomSteps();
-      setState(() {});
-      _startImageStream();
-    });
-    _initializeControllerFuture;
+    _setupCamera();
+  }
+
+  Future<void> _setupCamera() async {
+    _cameras = await availableCameras();
+    if (_cameras != null && _cameras!.isNotEmpty) {
+      _cameraDescription = _cameras!.firstWhere(
+        (camera) => camera.lensDirection == CameraLensDirection.front,
+        orElse: () => _cameras![0],
+      );
+
+      _controller = CameraController(
+        _cameraDescription!,
+        ResolutionPreset.medium,
+        enableAudio: false,
+        imageFormatGroup: Platform.isAndroid
+            ? ImageFormatGroup.nv21
+            : ImageFormatGroup.bgra8888,
+      );
+
+      try {
+        await _controller!.initialize();
+        if (!mounted) return;
+
+        _setupRandomSteps();
+        setState(() {
+          _isInitialized = true;
+        });
+        _startImageStream();
+      } catch (e) {
+        debugPrint("Camera initialization error: $e");
+      }
+    }
   }
 
   void _setupRandomSteps() {
@@ -101,7 +118,8 @@ class _SelfieCaptureState extends State<SelfieCapture> {
   }
 
   void _startImageStream() {
-    _controller.startImageStream((CameraImage image) {
+    if (_controller == null || !_controller!.value.isInitialized) return;
+    _controller!.startImageStream((CameraImage image) {
       if (_isDetecting || _cameraStopped) return;
       _isDetecting = true;
 
@@ -130,7 +148,7 @@ class _SelfieCaptureState extends State<SelfieCapture> {
       bytes: bytes,
       metadata: InputImageMetadata(
         size: Size(image.width.toDouble(), image.height.toDouble()),
-        rotation: _rotationIntToImageRotation(widget.camera.sensorOrientation),
+        rotation: _rotationIntToImageRotation(_cameraDescription!.sensorOrientation),
         format:
             InputImageFormatValue.fromRawValue(image.format.raw) ??
             InputImageFormat.nv21,
@@ -325,9 +343,10 @@ class _SelfieCaptureState extends State<SelfieCapture> {
       _isCapturing = true;
     });
     try {
-      await _controller.setFlashMode(FlashMode.off);
+      await _controller?.setFlashMode(FlashMode.off);
 
-      final image = await _controller.takePicture();
+      final image = await _controller?.takePicture();
+      if (image == null) return;
       final directory = await getApplicationDocumentsDirectory();
       final fileName = path.join(
         directory.path,
@@ -376,8 +395,8 @@ class _SelfieCaptureState extends State<SelfieCapture> {
 
   Future<void> _stopCamera() async {
     try {
-      if (_cameraStreaming) {
-        await _controller.stopImageStream();
+      if (_cameraStreaming && _controller != null) {
+        await _controller!.stopImageStream();
         _cameraStreaming = false;
       }
 
@@ -385,7 +404,9 @@ class _SelfieCaptureState extends State<SelfieCapture> {
         _cameraStopped = true;
       });
 
-      await _controller.dispose();
+      await _controller?.dispose();
+      _controller = null;
+      _isInitialized = false;
     } catch (e) {
       debugPrint('Error stopping camera: $e');
     }
@@ -402,24 +423,12 @@ class _SelfieCaptureState extends State<SelfieCapture> {
       _headTurnPhotoPath = null;
       _leftTurnPhotoPath = null;
       _rightTurnPhotoPath = null;
+      _isInitialized = false;
       _setupRandomSteps();
       message = "Blink Your Eyes";
     });
 
-    _controller = CameraController(
-      widget.camera,
-      ResolutionPreset.medium,
-      enableAudio: false,
-      imageFormatGroup: Platform.isAndroid
-          ? ImageFormatGroup
-                .nv21 // for Android
-          : ImageFormatGroup.bgra8888,
-    );
-    _initializeControllerFuture = _controller.initialize().then((_) async {
-      if (!mounted) return;
-      setState(() {});
-      _startImageStream();
-    });
+    await _setupCamera();
   }
 
   InputImageRotation _rotationIntToImageRotation(int rotation) {
@@ -479,51 +488,67 @@ class _SelfieCaptureState extends State<SelfieCapture> {
 
   @override
   void dispose() {
-    _controller.dispose();
+    _controller?.dispose();
     _faceDetector.close();
     _imageLabeler.close();
     super.dispose();
   }
 
   Widget _buildStepIndicator() {
-    if (_currentStepIndex >= _steps.length || _cameraStopped || _currentFace == null) {
-      return const SizedBox.shrink();
+    IconData icon;
+    bool isWarning = false;
+    bool isCompleted = false;
+
+    if (_cameraStopped) {
+      icon = Icons.check_circle;
+      isCompleted = true;
+    } else if (_currentFace == null) {
+      icon = Icons.warning_amber_rounded;
+      isWarning = true;
+    } else if (_currentStepIndex < _steps.length) {
+      final step = _steps[_currentStepIndex];
+      switch (step) {
+        case 'left':
+          icon = Icons.turn_left;
+          break;
+        case 'right':
+          icon = Icons.turn_right;
+          break;
+        case 'smile':
+          icon = Icons.sentiment_satisfied;
+          break;
+        case 'blink':
+          icon = Icons.remove_red_eye;
+          break;
+        default:
+          icon = Icons.warning_amber_rounded;
+          isWarning = true;
+      }
+    } else {
+      icon = Icons.check_circle;
+      isCompleted = true;
     }
 
-    final step = _steps[_currentStepIndex];
-    IconData? icon;
-    switch (step) {
-      case 'left':
-        icon = Icons.turn_left;
-        break;
-      case 'right':
-        icon = Icons.turn_right;
-        break;
-      case 'smile':
-        icon = Icons.sentiment_satisfied;
-        break;
-      case 'blink':
-        icon = Icons.remove_red_eye;
-        break;
-    }
-
-    if (icon == null) {
-      return const SizedBox.shrink();
-    }
-
-    return Center(child: _stepIcon(icon, false, true));
+    return Center(
+      child: _stepIcon(icon, isCompleted, !isCompleted, isWarning: isWarning),
+    );
   }
 
-  Widget _stepIcon(IconData icon, bool completed, bool isCurrent) {
+  Widget _stepIcon(IconData icon, bool completed, bool isCurrent,
+      {bool isWarning = false}) {
+    Color color = completed
+        ? Colors.green
+        : (isWarning
+            ? Colors.red
+            : (isCurrent ? Colors.blue : Colors.grey.shade300));
+
     return Container(
       padding: const EdgeInsets.all(8),
       decoration: BoxDecoration(
-        color: completed
-            ? Colors.green
-            : (isCurrent ? Colors.blue : Colors.grey.shade300),
+        color: color,
         shape: BoxShape.circle,
         border: isCurrent
-            ? Border.all(color: Colors.blue.withAlpha(64), width: 4)
+            ? Border.all(color: color.withAlpha(64), width: 4)
             : null,
       ),
       child: Icon(icon, color: Colors.white, size: isCurrent ? 24 : 18),
@@ -635,15 +660,15 @@ class _SelfieCaptureState extends State<SelfieCapture> {
                                     : const Center(
                                         child: Text("Processing..."),
                                       ))
-                              : (_controller.value.isInitialized)
+                              : (_isInitialized && _controller != null)
                               ? FittedBox(
                                   fit: BoxFit.cover,
                                   child: SizedBox(
                                     width:
-                                        _controller.value.previewSize!.height,
+                                        _controller!.value.previewSize!.height,
                                     height:
-                                        _controller.value.previewSize!.width,
-                                    child: CameraPreview(_controller),
+                                        _controller!.value.previewSize!.width,
+                                    child: CameraPreview(_controller!),
                                   ),
                                 )
                               : const Center(
@@ -654,7 +679,7 @@ class _SelfieCaptureState extends State<SelfieCapture> {
                                   ),
                                 ),
                         ),
-                        if (_controller.value.isInitialized || _cameraStopped)
+                        if ((_isInitialized && _controller != null) || _cameraStopped)
                           Positioned.fill(
                             child: Padding(
                               padding: const EdgeInsets.all(2.0),

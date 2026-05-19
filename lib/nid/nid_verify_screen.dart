@@ -74,17 +74,10 @@ class NidVerifyScreen extends StatelessWidget {
                         ),
                       ),
                       onPressed: () {
-                        final frontCamera = cameras.firstWhere(
-                          (camera) =>
-                              camera.lensDirection == CameraLensDirection.front,
-                          orElse: () => cameras.first,
-                        );
-
                         Navigator.push(
                           context,
                           MaterialPageRoute(
-                            builder: (context) =>
-                                SelfieCapture(camera: frontCamera),
+                            builder: (context) => SelfieCapture(),
                           ),
                         );
                       },

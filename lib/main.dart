@@ -40,16 +40,9 @@ class HomeScreen extends StatelessWidget {
           children: [
             TextButton.icon(
               onPressed: () {
-                final frontCamera = cameras.firstWhere(
-                  (camera) => camera.lensDirection == CameraLensDirection.front,
-                  orElse: () => cameras.first,
-                );
-
                 Navigator.push(
                   context,
-                  MaterialPageRoute(
-                    builder: (context) => SelfieCapture(camera: frontCamera),
-                  ),
+                  MaterialPageRoute(builder: (context) => SelfieCapture()),
                 );
               },
               label: Text('Check Liveness'),
