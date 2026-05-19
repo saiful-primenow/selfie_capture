@@ -1,5 +1,6 @@
 import 'package:camera/camera.dart';
 import 'package:flutter/material.dart';
+import 'package:selfie_capture/account_opening_screen.dart';
 import 'package:selfie_capture/selfie_capture.dart';
 import 'nid/nid_camera_screen.dart';
 
@@ -52,6 +53,19 @@ class HomeScreen extends StatelessWidget {
                 );
               },
               label: Text('Check Liveness'),
+              icon: Icon(Icons.camera_alt_outlined),
+            ),
+
+            TextButton.icon(
+              onPressed: () {
+                Navigator.push(
+                  context,
+                  MaterialPageRoute(
+                    builder: (context) => AccountOpeningScreen(),
+                  ),
+                );
+              },
+              label: Text('Instruction'),
               icon: Icon(Icons.camera_alt_outlined),
             ),
 

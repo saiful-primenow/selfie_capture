@@ -78,51 +78,6 @@ class _NidCameraScreenState extends State<NidCameraScreen> {
     }
   }
 
-  /*Future<void> _pickAndCropImage() async {
-    try {
-      // Pick Image
-      final XFile? pickedFile = await _picker.pickImage(
-        source: ImageSource.gallery,
-        imageQuality: 100,
-      );
-
-      if (pickedFile == null) return;
-
-      // Crop Image
-      final CroppedFile? croppedFile = await ImageCropper().cropImage(
-        sourcePath: pickedFile.path,
-        compressQuality: 100,
-        uiSettings: [
-          AndroidUiSettings(
-            toolbarTitle: 'Crop Image',
-            toolbarColor: Colors.blue,
-            toolbarWidgetColor: Colors.white,
-            lockAspectRatio: false,
-          ),
-          IOSUiSettings(
-            title: 'Crop Image',
-          ),
-        ],
-      );
-
-      if (croppedFile == null) return;
-
-      if (!mounted) return;
-
-      // Navigate to Preview Screen
-      Navigator.push(
-        context,
-        MaterialPageRoute(
-          builder: (_) => PreviewImageScreen(
-            imagePath: croppedFile.path,
-          ),
-        ),
-      );
-    } catch (e) {
-      debugPrint("Error: $e");
-    }
-  }*/
-
   Future<CroppedFile?> _cropImage(String path) async {
     try {
       return await ImageCropper().cropImage(
