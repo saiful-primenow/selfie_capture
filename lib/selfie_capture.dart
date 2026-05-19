@@ -435,6 +435,19 @@ class _SelfieCaptureState extends State<SelfieCapture> {
     }
   }
 
+  double get _progress {
+    if (_cameraStopped) return 1.0;
+    if (_steps.isEmpty) return 0.0;
+
+    double progress = _currentStepIndex.toDouble();
+    if (_currentStepIndex < _steps.length &&
+        _steps[_currentStepIndex] == 'blink') {
+      progress += (_blinkCount / 3).clamp(0.0, 1.0);
+    }
+
+    return (progress / _steps.length).clamp(0.0, 1.0);
+  }
+
   // image conversion
   void convertImageToBase64(
     String image,
@@ -646,9 +659,9 @@ class _SelfieCaptureState extends State<SelfieCapture> {
                             child: Padding(
                               padding: const EdgeInsets.all(2.0),
                               child: CircularProgressIndicator(
-                                value: _cameraStopped ? 1.0 : (_blinkCount / 3),
+                                value: _progress,
                                 strokeWidth: 14,
-                                backgroundColor: Color(0xFFE5E7EA),
+                                backgroundColor: const Color(0xFFE5E7EA),
                                 valueColor: const AlwaysStoppedAnimation<Color>(
                                   Color(0xFFFAB0FF),
                                 ),
