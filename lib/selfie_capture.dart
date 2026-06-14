@@ -51,6 +51,7 @@ class _SelfieCaptureState extends State<SelfieCapture> {
   bool _isScreenDetected = false;
   bool _isHeadCapDetected = false;
   bool _isMaskDetected = false;
+  bool _isDialogShowing = false;
 
   // Liveness Flow Variables
   final List<String> _steps = [];
@@ -120,7 +121,7 @@ class _SelfieCaptureState extends State<SelfieCapture> {
   void _startImageStream() {
     if (_controller == null || !_controller!.value.isInitialized) return;
     _controller!.startImageStream((CameraImage image) {
-      if (_isDetecting || _cameraStopped) return;
+      if (_isDetecting || _cameraStopped || _isDialogShowing) return;
       _isDetecting = true;
 
       debugPrint("Image format: ${image.format.group.toString()}");
@@ -220,16 +221,16 @@ class _SelfieCaptureState extends State<SelfieCapture> {
       if (faces.length == 1) {
         if (_isGlassesDetected) {
           message = "Please remove your glasses";
-          _currentFace == null;
+          _currentFace = null;
         } else if (_isHeadCapDetected) {
           message = "Please remove your hat/cap";
-          _currentFace == null;
+          _currentFace = null;
         } else if (_isMaskDetected) {
           message = "Please remove your mask";
-          _currentFace == null;
+          _currentFace = null;
         } else if (_isScreenDetected) {
           message = "Digital screen detected. Use a real face.";
-          _currentFace == null;
+          _currentFace = null;
         } else {
           _currentFace = faces.first;
           _processCurrentStep();
@@ -241,6 +242,10 @@ class _SelfieCaptureState extends State<SelfieCapture> {
         }
       }
     });
+
+    if (_isGlassesDetected) {
+      _showGlassesDialog();
+    }
   }
 
   void _processCurrentStep() {
@@ -393,6 +398,35 @@ class _SelfieCaptureState extends State<SelfieCapture> {
     }
   }
 
+  void _showGlassesDialog() {
+    if (_isDialogShowing) return;
+    setState(() {
+      _isDialogShowing = true;
+    });
+    showDialog(
+      context: context,
+      barrierDismissible: false,
+      builder: (context) => AlertDialog(
+        title: const Text("Glasses Detected"),
+        content: const Text(
+          "Please remove your glasses or sunglasses to continue the liveness check.",
+        ),
+        actions: [
+          TextButton(
+            onPressed: () {
+              Navigator.pop(context);
+              _restartCamera();
+              setState(() {
+                _isDialogShowing = false;
+              });
+            },
+            child: const Text("OK"),
+          ),
+        ],
+      ),
+    );
+  }
+
   Future<void> _stopCamera() async {
     try {
       if (_cameraStreaming && _controller != null) {
@@ -424,6 +458,7 @@ class _SelfieCaptureState extends State<SelfieCapture> {
       _leftTurnPhotoPath = null;
       _rightTurnPhotoPath = null;
       _isInitialized = false;
+      _isDialogShowing = false;
       _setupRandomSteps();
       message = "Blink Your Eyes";
     });
